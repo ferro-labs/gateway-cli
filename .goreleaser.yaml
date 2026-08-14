@@ -1,0 +1,49 @@
+# GoReleaser for the standalone ferro operator console.
+version: 2
+project_name: ferro
+dist: dist
+
+builds:
+  - id: ferro
+    main: ./cmd/ferro
+    binary: ferro
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+      - -X github.com/ferro-labs/gateway-cli/internal/version.Version={{.Version}}
+      - -X github.com/ferro-labs/gateway-cli/internal/version.Commit={{.ShortCommit}}
+      - -X github.com/ferro-labs/gateway-cli/internal/version.Date={{.Date}}
+
+# cmd/fakegw is a development tool (a fake gateway for testing the CLI without
+# a server). It is excluded by omission — builds are listed explicitly above.
+# Do not add a build entry for it.
+
+archives:
+  - formats: [tar.gz]
+    name_template: "ferro_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - src: README.md
+        dst: README.md
+      - src: CHANGELOG.md
+        dst: CHANGELOG.md
+      - src: LICENSE
+        dst: LICENSE
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  name_template: "Ferro CLI v{{ .Version }}"
+
+changelog:
+  use: git
+  filters:
+    include:
+      - "^feat"
+      - "^fix"
+      - "^perf"
