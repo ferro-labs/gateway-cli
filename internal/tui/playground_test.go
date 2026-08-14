@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -103,8 +104,12 @@ func TestSubmitAppendsTurnsAndStreams(t *testing.T) {
 func TestLeavingPlaygroundCancelsStreamBeforeHeaders(t *testing.T) {
 	requestStarted := make(chan struct{})
 	releaseServer := make(chan struct{})
+	// sync.Once, not a bare close: a second request reaching this handler —
+	// a client retry, or a later test change probing the same server — must
+	// not panic the whole test binary on a double close.
+	var once sync.Once
 	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
-		close(requestStarted)
+		once.Do(func() { close(requestStarted) })
 		<-releaseServer
 	}))
 	defer func() {

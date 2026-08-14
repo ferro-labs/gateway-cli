@@ -166,9 +166,25 @@ func (m *Modal) cycle(d int) {
 // degrades to its bare content rather than emitting a frame with a hole in it.
 func (m *Modal) view(a *App, w, rows int) string {
 	if rows < 4 || w < 14 {
-		return fill(m.lines(a, w), w, rows)
+		return fill(m.fit(a, w, rows), w, rows)
 	}
-	return a.Theme.FrameRound(fill(m.lines(a, w-4), w-4, rows-2), w)
+	return a.Theme.FrameRound(fill(m.fit(a, w-4, rows-2), w-4, rows-2), w)
+}
+
+// fit drops the blank separators while the card is taller than the budget.
+// fill truncates from the tail, and the tail is the OK arm and the "type the
+// name to enable" gate hint — the one control a destructive modal cannot
+// render without — so those blanks have to go before fill ever sees them.
+func (m *Modal) fit(a *App, w, rows int) []string {
+	out := m.lines(a, w)
+	for i := 0; i < len(out) && len(out) > rows; {
+		if out[i] == "" {
+			out = append(out[:i], out[i+1:]...)
+			continue
+		}
+		i++
+	}
+	return out
 }
 
 // lines is the card's content, in order: title, body, rows, editor, actions.

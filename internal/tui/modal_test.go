@@ -161,6 +161,27 @@ func TestModalViewKeepsThePaneContract(t *testing.T) {
 	}
 }
 
+// fill truncates from the tail, and the tail is the OK arm and the "type the
+// name to enable" gate hint. Before dropping blank separators first, a short
+// pane lost those before it lost anything cosmetic, leaving a gated
+// destructive modal with no visible confirmation control.
+func TestModalViewKeepsActionsWhenPaneIsShort(t *testing.T) {
+	a := composerApp()
+	a.Modal = &Modal{
+		Title:   "Revoke ci-pipeline?",
+		Body:    "Every client holding this key fails immediately.",
+		Rows:    []ModalKV{{K: "name", V: "ci-pipeline", Bold: true}},
+		Input:   true,
+		Confirm: "ci-pipeline",
+		OKLabel: "revoke",
+		Danger:  true,
+	}
+	view := a.paneView(60, 7)
+	if !strings.Contains(view, "revoke") || !strings.Contains(view, "type the name to enable") {
+		t.Fatalf("a short pane must drop blank separators before the OK arm, got:\n%s", view)
+	}
+}
+
 // A modal body can carry intentional line breaks; rendering must preserve them
 // instead of collapsing the wording into one run-on line.
 func TestModalRendersEveryBodyLine(t *testing.T) {

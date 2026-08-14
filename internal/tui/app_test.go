@@ -266,8 +266,11 @@ func TestCompactStatusDoesNotInventZeroMeasurements(t *testing.T) {
 	view := a.viewCompactStatus()
 	gatewayRow := findRow(view, "Gateway")
 	providersRow := findRow(view, "Providers")
+	// A bare \b0\b, not strings.Contains: the row label or padding could
+	// legitimately carry a "0" elsewhere, and that must not fail this check —
+	// only an invented zero measurement should.
 	if !strings.Contains(gatewayRow, a.dash()) || strings.Contains(gatewayRow, "0ms") ||
-		!strings.Contains(providersRow, a.dash()) || strings.Contains(providersRow, "0") {
+		!strings.Contains(providersRow, a.dash()) || regexp.MustCompile(`\b0\b`).MatchString(providersRow) {
 		t.Fatalf("unreported latency and provider counts must render as dashes:\n%s", view)
 	}
 }
