@@ -403,7 +403,8 @@ func (a *App) viewBrandBlock() string {
 	}
 	// One blank row first: the readout sits against the stack's body rather
 	// than level with the wordmark, which owns the top line alone.
-	col := []string{""}
+	col := make([]string, 0, 1+len(state))
+	col = append(col, "")
 	for _, l := range state {
 		col = append(col, padLeft(l, stateW))
 	}

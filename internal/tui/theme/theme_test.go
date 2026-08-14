@@ -68,7 +68,7 @@ func TestGlyphsASCII(t *testing.T) {
 }
 
 func TestMarkShape(t *testing.T) {
-	if len(MarkRows) != 7 {
+	if len(markRows) != 7 {
 		t.Fatal("mark is exactly 7 rows — never redraw it")
 	}
 }
@@ -78,7 +78,7 @@ func TestMarkShape(t *testing.T) {
 // the full width, and every inked column still inked.
 func TestMarkFoldsToHalfHeight(t *testing.T) {
 	rows := foldedArt()
-	if want := (len(MarkRows) + 1) / 2; len(rows) != want {
+	if want := (len(markRows) + 1) / 2; len(rows) != want {
 		t.Fatalf("mark folded to %d rows, want %d", len(rows), want)
 	}
 	art := markArt()

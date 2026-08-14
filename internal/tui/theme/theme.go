@@ -172,8 +172,12 @@ func padCell(s string, w int) string {
 // markStem is the F's stem: the three rows that carry no arm are the same row.
 const markStem = "     ███"
 
-// MarkRows is the split-F, sampled from f_logo.svg — canonical, do not redraw.
-var MarkRows = []string{
+// markRows is the split-F, sampled from f_logo.svg — canonical, do not redraw.
+//
+// An array, and unexported: markArt indexes row zero to measure the shared
+// margin, so a caller that emptied a slice here would panic the whole console
+// on a header render. The length is a compile-time fact instead.
+var markRows = [...]string{
 	"       ████████",
 	"     ██████████",
 	markStem,
@@ -253,17 +257,17 @@ func fold(topRow, bottomRow string) string {
 	return strings.TrimRight(string(out), " ")
 }
 
-// markArt is MarkRows with the shared left margin the SVG sample carried
+// markArt is markRows with the shared left margin the SVG sample carried
 // measured off, so the mark starts on its own first inked column. The shape is
 // untouched: every row loses the same count, so the split arms keep their
 // overhang. Byte slicing is safe because the margin is all spaces.
 func markArt() []string {
-	indent := len(MarkRows[0])
-	for _, r := range MarkRows {
+	indent := len(markRows[0])
+	for _, r := range markRows {
 		indent = min(indent, len(r)-len(strings.TrimLeft(r, " ")))
 	}
-	out := make([]string, len(MarkRows))
-	for i, r := range MarkRows {
+	out := make([]string, len(markRows))
+	for i, r := range markRows {
 		out[i] = r[indent:]
 	}
 	return out
