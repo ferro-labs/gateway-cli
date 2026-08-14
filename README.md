@@ -196,7 +196,7 @@ the gateway module. Wire shapes are copied, never imported, and CI enforces the
 boundary.
 
 ```bash
-make fake     # fake gateway (cmd/fakegw) on :8080
+make fake     # fake gateway (cmd/fakegw) on 127.0.0.1:8080
 make build    # go build -o ferro ./cmd/ferro
 make test     # go test -race ./...
 make lint     # golangci-lint run ./...

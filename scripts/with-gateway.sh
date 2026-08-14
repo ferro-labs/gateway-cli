@@ -14,6 +14,11 @@
 # sessions, and audit — everything except live chat.
 set -euo pipefail
 
+# Checked up front: the health probe below reads curl's exit status to decide
+# the gateway is not up yet, so a missing curl looks exactly like a gateway
+# that never starts — a 15-second wait ending in the wrong diagnosis.
+command -v curl >/dev/null || { echo "curl is required to probe the gateway" >&2; exit 2; }
+
 cli="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 gateway_source="${FERRO_GATEWAY_SOURCE:-}"
 if [ -z "$gateway_source" ]; then

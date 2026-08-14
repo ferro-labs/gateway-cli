@@ -35,15 +35,10 @@ linters:
           deny:
             - pkg: gopkg.in/yaml.v3
               desc: use go.yaml.in/yaml/v3
-            - pkg: github.com/ferro-labs/ai-gateway/config
-              desc: &http-only gateway-cli communicates with AI Gateway over HTTP only
-            - { pkg: github.com/ferro-labs/ai-gateway/internal, desc: *http-only }
-            - { pkg: github.com/ferro-labs/ai-gateway/mcp, desc: *http-only }
-            - { pkg: github.com/ferro-labs/ai-gateway/models, desc: *http-only }
-            - { pkg: github.com/ferro-labs/ai-gateway/observability, desc: *http-only }
-            - { pkg: github.com/ferro-labs/ai-gateway/pkg, desc: *http-only }
-            - { pkg: github.com/ferro-labs/ai-gateway/plugin, desc: *http-only }
-            - { pkg: github.com/ferro-labs/ai-gateway/providers, desc: *http-only }
+            # depguard prefix-matches, so the module root also denies every
+            # current and future subpackage.
+            - pkg: github.com/ferro-labs/ai-gateway
+              desc: gateway-cli communicates with AI Gateway over HTTP only
     dupl:
       threshold: 150
     gocyclo:

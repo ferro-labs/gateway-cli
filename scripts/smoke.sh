@@ -40,6 +40,7 @@ fi
 
 if [ -n "${FERRO_SMOKE_URL:-}" ]; then
   FERRO_URL="$FERRO_SMOKE_URL" "$bin" status
+  command -v python3 >/dev/null || { echo "FAIL: python3 is required for the live JSON smoke check" >&2; exit 1; }
   # stdout must be exactly one JSON document — nothing else may leak into it.
   FERRO_URL="$FERRO_SMOKE_URL" "$bin" status --format json | python3 -m json.tool >/dev/null
   echo "[OK] live smoke against $FERRO_SMOKE_URL"

@@ -13,7 +13,9 @@ import (
 )
 
 func main() {
-	addr := flag.String("addr", ":8080", "listen address")
+	// Loopback-only: --no-auth accepts unauthenticated admin requests, so a
+	// wildcard bind would expose them to anything else on the network.
+	addr := flag.String("addr", "127.0.0.1:8080", "listen address")
 	degraded := flag.Bool("degraded", false, "healthy gateway in trouble: 200 with a half-open circuit and one unroutable target")
 	noProviders := flag.Bool("no-providers", false, "no credential configured: /health 503 no_providers, /readyz 503 not_ready")
 	noAuth := flag.Bool("no-auth", false, "accept unauthenticated admin requests")
