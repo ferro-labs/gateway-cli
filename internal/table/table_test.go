@@ -45,6 +45,28 @@ func TestRowsMatchesWrite(t *testing.T) {
 	}
 }
 
+// A gateway-provided cell — a provider name, a plugin summary, an upstream
+// error message — is attacker-influenced data reaching a terminal. A tab or
+// newline must not inject a column or row, and an ESC must not reach the
+// terminal as a live escape sequence.
+func TestWriteNormalizesControlCharactersInCells(t *testing.T) {
+	var buf bytes.Buffer
+	Write(&buf, []string{"NAME"}, [][]string{{"evil\tname\r\ninjected\x1b[2Jrow"}})
+
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("control characters in a cell must not inject rows, got %d lines:\n%q", len(lines), buf.String())
+	}
+	if strings.ContainsAny(lines[2], "\t\r\n\x1b") {
+		t.Fatalf("row line still carries a raw control character: %q", lines[2])
+	}
+
+	rows := Rows([]string{"NAME"}, [][]string{{"evil\tname\r\ninjected\x1b[2Jrow"}})
+	if len(rows) != 3 {
+		t.Fatalf("Rows must not split an injected newline into a separate transcript record, got %d rows: %q", len(rows), rows)
+	}
+}
+
 func TestOrDash(t *testing.T) {
 	for _, tc := range []struct{ in, want string }{
 		{"", "-"},

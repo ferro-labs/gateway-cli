@@ -16,11 +16,28 @@ import (
 	"text/tabwriter"
 )
 
+// tableCellReplacer neutralizes control characters a gateway-provided cell
+// (a provider name, a plugin summary, an upstream error message) could carry:
+// a tab or newline would inject a column or row into the layout below, and
+// ESC starts a terminal escape sequence this package has no business passing
+// through to whatever is reading stdout. Cell text is data, not layout or
+// terminal control, so all four collapse to a single space.
+var tableCellReplacer = strings.NewReplacer("\t", " ", "\r", " ", "\n", " ", "\x1b", " ")
+
+func normalizeCells(cells []string) []string {
+	out := make([]string, len(cells))
+	for i, c := range cells {
+		out[i] = tableCellReplacer.Replace(c)
+	}
+	return out
+}
+
 // Write renders headers and rows as a plain, alignment-padded table to w: a
 // header line, a dashed rule the width of each heading, then one line per
 // row. No ANSI, no box drawing — this is the layout `ferro <verb>` pipes to
 // stdout, as likely to be read by awk as by a person.
 func Write(w io.Writer, headers []string, rows [][]string) {
+	headers = normalizeCells(headers)
 	tw := tabwriter.NewWriter(w, 0, 0, 3, ' ', 0)
 	_, _ = fmt.Fprintln(tw, strings.Join(headers, "\t"))
 
@@ -31,7 +48,7 @@ func Write(w io.Writer, headers []string, rows [][]string) {
 	_, _ = fmt.Fprintln(tw, strings.Join(dashes, "\t"))
 
 	for _, r := range rows {
-		_, _ = fmt.Fprintln(tw, strings.Join(r, "\t"))
+		_, _ = fmt.Fprintln(tw, strings.Join(normalizeCells(r), "\t"))
 	}
 	_ = tw.Flush()
 }
