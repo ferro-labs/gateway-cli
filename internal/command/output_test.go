@@ -57,6 +57,23 @@ func TestJSONPurityNarrativeGoesToStderr(t *testing.T) {
 	}
 }
 
+// JSON is piped to jq or a file, never embedded in HTML, so <, >, and & in an
+// audit detail, a provider error message, or a URL must survive literally
+// rather than becoming <-style escapes.
+func TestJSONDoesNotEscapeHTMLCharacters(t *testing.T) {
+	p, out, _ := newTestPrinter(FormatJSON)
+	if err := p.JSON(map[string]string{"url": "http://x?a=1&b=2", "detail": "a<b> was denied"}); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	// Verbatim substring match is the assertion: SetEscapeHTML(false) means
+	// these bytes appear exactly as given rather than as <-style escapes,
+	// and a literal match fails on its own if any got turned into an escape.
+	if !strings.Contains(got, "a<b> was denied") || !strings.Contains(got, "http://x?a=1&b=2") {
+		t.Fatalf("HTML characters must stay literal, not escaped, got %q", got)
+	}
+}
+
 func TestYAMLGoesToStdout(t *testing.T) {
 	p, out, _ := newTestPrinter(FormatYAML)
 	if err := p.YAML(map[string]string{"state": "connected"}); err != nil {

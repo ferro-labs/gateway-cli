@@ -137,6 +137,10 @@ func (p *Printer) Table(headers []string, rows [][]string) {
 func (p *Printer) JSON(v any) error {
 	enc := json.NewEncoder(p.Out)
 	enc.SetIndent("", "  ")
+	// This output is piped to jq or a file, never embedded in HTML, so the
+	// encoder's default <, >, & escaping only mangles audit details, provider
+	// error messages, and URLs that legitimately contain them.
+	enc.SetEscapeHTML(false)
 	return enc.Encode(v)
 }
 

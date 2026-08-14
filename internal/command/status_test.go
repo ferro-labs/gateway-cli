@@ -122,6 +122,34 @@ func TestStatusUnreachableExits1ButStillReportsState(t *testing.T) {
 	}
 }
 
+// Missing is not zero (README's "Contracts worth relying on"): an unreachable
+// gateway never answered, so the elapsed time until the dial failed is not a
+// latency measurement and must not print as one.
+func TestStatusUnreachableRendersDashLatencyNot0ms(t *testing.T) {
+	stdout, _, err := execute(t, "status", "--gateway-url", "http://127.0.0.1:1")
+	if err == nil {
+		t.Fatal("unreachable must exit 1")
+	}
+	if strings.Contains(stdout, "0ms") {
+		t.Fatalf("an unreachable gateway must never print a latency, got %q", stdout)
+	}
+	lines := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("want header + underline + 1 row, got %d lines:\n%s", len(lines), stdout)
+	}
+	headers := strings.Fields(lines[0])
+	row := strings.Fields(lines[2])
+	for i, h := range headers {
+		if h == "LATENCY" {
+			if row[i] != "-" {
+				t.Fatalf("LATENCY must render \"-\" when the gateway was never reached, got %q in %q", row[i], lines[2])
+			}
+			return
+		}
+	}
+	t.Fatalf("no LATENCY column in header: %q", lines[0])
+}
+
 // A gateway reachable without a usable credential is still reachable: the
 // report degrades to what /health and /readyz say rather than failing.
 func TestStatusWithoutCredentialDegradesNotFails(t *testing.T) {

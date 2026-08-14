@@ -40,12 +40,21 @@ func newStatusCmd() *cobra.Command {
 				if report.Targets != nil {
 					targets = fmt.Sprintf("%d/%d", report.Targets.Routable, report.Targets.Total)
 				}
+				// statusErr is non-nil only when the gateway was never reached at
+				// all (Status returns early on a failed /health). The elapsed
+				// time up to that failure is not the gateway's RTT, so printing
+				// it as one would read as an instant reply on the exact row that
+				// reports an outage.
+				latency := "-"
+				if statusErr == nil {
+					latency = fmt.Sprintf("%dms", report.LatencyMs)
+				}
 				d.Printer.Table(
 					[]string{colState, colURL, "LATENCY", "TARGETS", "PROVIDERS", colModels, "MCP", "AUTH"},
 					[][]string{{
 						report.State,
 						report.URL,
-						fmt.Sprintf("%dms", report.LatencyMs),
+						latency,
 						targets,
 						table.CountOrDash(report.Providers),
 						table.CountOrDash(report.Models),
