@@ -1,8 +1,6 @@
 package command
 
 import (
-	"fmt"
-
 	"github.com/spf13/cobra"
 
 	"github.com/ferro-labs/gateway-cli/internal/table"
@@ -22,18 +20,7 @@ func newModelsCmd() *cobra.Command {
 			if d.Printer.Format != FormatTable {
 				return d.printStructured(models)
 			}
-			rows := make([][]string, 0, len(models))
-			for _, m := range models {
-				rows = append(rows, []string{
-					m.ID,
-					table.OrDash(m.OwnedBy),
-					table.OrDash(m.Mode),
-					table.PositiveOrDash(m.ContextWindow),
-					fmt.Sprintf("%d", len(m.Capabilities)),
-					table.OrDash(m.Status),
-				})
-			}
-			d.Printer.Table([]string{"ID", "OWNED BY", "MODE", "CONTEXT", "CAPABILITIES", colStatus}, rows)
+			d.Printer.Table(table.ModelHeaders, table.ModelRows(models))
 			return nil
 		},
 	}

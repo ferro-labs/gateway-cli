@@ -209,14 +209,8 @@ func verbRows(ctx context.Context, c *api.Client, verb string) ([]TranscriptRow,
 		if err != nil {
 			return nil, err
 		}
-		cells := make([][]string, 0, len(models))
-		for _, m := range models {
-			cells = append(cells, []string{
-				m.ID, table.OrDash(m.OwnedBy), table.OrDash(m.Mode), table.PositiveOrDash(m.ContextWindow),
-				fmt.Sprintf("%d", len(m.Capabilities)), table.OrDash(m.Status),
-			})
-		}
-		return orEmpty(tableRows([]string{"ID", "OWNED BY", "MODE", "CONTEXT", "CAPABILITIES", "STATUS"}, cells),
+		cells := table.ModelRows(models)
+		return orEmpty(tableRows(table.ModelHeaders, cells),
 			len(cells), "this gateway routes no models"), nil
 
 	case verbProviders:
