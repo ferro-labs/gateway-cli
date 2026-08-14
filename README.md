@@ -5,7 +5,7 @@ One static binary that is both a scriptable CLI and a full-screen terminal
 console — health, request logs, API keys, and a live playground, without
 opening a browser.
 
-![ferro-cli console demo](docs/demo.gif)
+![ferro-cli console demo](docs/console.gif)
 
 `ferro-cli` ships a single binary named **`ferro`**. Run it with a verb and it
 behaves like any other Unix tool — `ferro status`, `ferro keys list`,
