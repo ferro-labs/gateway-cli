@@ -425,15 +425,30 @@ func TestSafeBodyRedactsCompoundCredentials(t *testing.T) {
 		"nested":{"refresh_token":"two","client_secret":"three"},
 		"items":[{"private_key":"four"}],
 		"apiKey":"five","X-API-Key":"six","sessionToken":"seven",
+		"credential":"eight","credentials":"nine",
 		"note":"visible"
 	}`))
-	for _, secret := range []string{"one", "two", "three", "four", "five", "six", "seven"} {
+	for _, secret := range []string{"one", "two", "three", "four", "five", "six", "seven", "eight", "nine"} {
 		if strings.Contains(got, secret) {
 			t.Fatalf("safeBody leaked %q: %s", secret, got)
 		}
 	}
-	if strings.Count(got, "[REDACTED]") != 7 || !strings.Contains(got, "visible") {
+	if strings.Count(got, "[REDACTED]") != 9 || !strings.Contains(got, "visible") {
 		t.Fatalf("every compound credential field must be redacted: %s", got)
+	}
+}
+
+// TestSafeBodyRedactsFgwSecretUnderAnyFieldName pins the value-based catch: a
+// live gateway can drift a master key onto a field name this vocabulary has
+// never seen, but every key this gateway issues is fgw_-prefixed regardless
+// of where it lands (newSecret, internal/fixture/keys.go).
+func TestSafeBodyRedactsFgwSecretUnderAnyFieldName(t *testing.T) {
+	got := safeBody([]byte(`{"unexpected_field":"fgw_wildcardvalue","note":"visible"}`))
+	if strings.Contains(got, "fgw_wildcardvalue") {
+		t.Fatalf("safeBody leaked a fgw_ secret under an unlisted field name: %s", got)
+	}
+	if strings.Count(got, "[REDACTED]") != 1 || !strings.Contains(got, "visible") {
+		t.Fatalf("fgw_-prefixed value must be redacted regardless of field name: %s", got)
 	}
 }
 
@@ -443,12 +458,27 @@ func redact(value any) {
 		for key, child := range value {
 			normalized := strings.ToLower(strings.NewReplacer("_", "", "-", "").Replace(key))
 			switch normalized {
+			// credential/credentials joins this list because it is this
+			// codebase's own word for the secret (AcceptKey, defaultKey in
+			// internal/fixture/state.go) even though the wire field is
+			// spelled "key".
 			case "key", "apikey", "xapikey", "privatekey",
 				"secret", "clientsecret", "token", "accesstoken",
-				"refreshtoken", "sessiontoken", "authorization":
+				"refreshtoken", "sessiontoken", "authorization",
+				"credential", "credentials":
 				value[key] = "[REDACTED]"
 			default:
-				redact(child)
+				if s, ok := child.(string); ok && strings.HasPrefix(s, "fgw_") {
+					// Every master key this gateway issues is fgw_-prefixed
+					// (newSecret, internal/fixture/keys.go). raw() dumps a
+					// live gateway's actual bytes, not internal/api's
+					// modeled shape, so matching the value catches a secret
+					// riding under a field name this vocabulary has never
+					// seen.
+					value[key] = "[REDACTED]"
+				} else {
+					redact(child)
+				}
 			}
 		}
 	case []any:

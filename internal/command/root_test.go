@@ -13,6 +13,11 @@ import (
 
 func execute(t *testing.T, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
+	// A developer's real ~/.config/ferro/config.yaml must not leak into a
+	// test run: point the OS default config dir at an empty one so DefaultPath
+	// resolves to a file that never exists, leaving --config and FERRO_CONFIG
+	// free to override it as they always could.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	root := NewRoot()
 	var out, errb bytes.Buffer
 	root.SetOut(&out)
@@ -96,6 +101,9 @@ func TestVersionSkipsConnectionSetup(t *testing.T) {
 // happens to exist.
 func withProbe(t *testing.T, args ...string) (*runtimeDeps, error) {
 	t.Helper()
+	// See execute's identical guard: without it, a real ferro config on the
+	// host machine could resolve into these tests' connection setup.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	root := NewRoot()
 	var got *runtimeDeps
 	root.AddCommand(&cobra.Command{

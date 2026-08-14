@@ -21,7 +21,12 @@ import (
 
 // executeCtx is execute() with a caller-owned context, which is what a tail
 // needs: cancelling it is how SIGINT reaches the poll loop.
-func executeCtx(ctx context.Context, args ...string) (stdout, stderr string, err error) {
+func executeCtx(ctx context.Context, t *testing.T, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
+	// See execute's identical guard in root_test.go: without it, a real ferro
+	// config on the host machine could resolve into these tests' connection
+	// setup.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	root := NewRoot()
 	var out, errb bytes.Buffer
 	root.SetOut(&out)
@@ -217,7 +222,7 @@ func TestLogsTailPrintsRowsAndExitsCleanlyOnCancel(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
 	defer cancel()
 
-	stdout, _, err := executeCtx(ctx, "logs", "tail", "--since", "1h",
+	stdout, _, err := executeCtx(ctx, t, "logs", "tail", "--since", "1h",
 		"--gateway-url", srv.URL)
 	if err != nil {
 		t.Fatalf("a tail the operator interrupted is not a failure: %v", err)
@@ -242,7 +247,7 @@ func TestLogsTailBacksOffAndKeepsGoingOnFailure(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 	defer cancel()
 
-	stdout, stderr, err := executeCtx(ctx, "logs", "tail",
+	stdout, stderr, err := executeCtx(ctx, t, "logs", "tail",
 		"--gateway-url", srv.URL)
 	if err != nil {
 		t.Fatalf("a poll failure is a warning, not an exit: %v", err)
@@ -274,17 +279,37 @@ func TestLogsTailReportsTruncationWithoutBackingOff(t *testing.T) {
 	// every poll exhausts its page bound with rows still outstanding.
 	body := []byte(`{"data":[` + strings.Join(rows, ",") +
 		`],"summary":{"total_entries":1000000,"returned_entries":100}}`)
+
+	// A fixed wall-clock budget for "one whole poll" races the page count
+	// against however long 32 sequential round trips take under load — land
+	// the deadline mid-poll and Poll returns a context error with stdout
+	// still empty, no product defect behind it. Cancel off the 32nd response
+	// instead of off a clock, so the interrupt cannot land before the poll
+	// that must finish first, regardless of how slow the run is.
+	var calls atomic.Int32
+	done := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(body)
+		if calls.Add(1) == 32 {
+			close(done)
+		}
 	}))
 	defer srv.Close()
 
-	// Long enough for one whole poll — 32 pages of it — then the interrupt.
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
+	go func() {
+		<-done
+		// The 32nd response is written, not yet read: give the client time to
+		// receive and decode it before pulling the context out from under it.
+		// This only has to outlast one small JSON decode, not 32 round trips,
+		// so it stays well clear of the flake it replaces.
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
 
-	stdout, stderr, err := executeCtx(ctx, "logs", "tail", "--gateway-url", srv.URL)
+	stdout, stderr, err := executeCtx(ctx, t, "logs", "tail", "--gateway-url", srv.URL)
 	if err != nil {
 		t.Fatalf("a truncated poll is not a failed command: %v", err)
 	}

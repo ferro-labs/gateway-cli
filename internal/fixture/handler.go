@@ -481,14 +481,8 @@ func parseSince(w http.ResponseWriter, q url.Values) (time.Time, bool) {
 // that ignored them would answer rows the query excluded — a lie downstream
 // tests would then enshrine. since is pre-parsed by parseSince rather than
 // reparsed here, so a malformed value 400s before any row is ever filtered.
-func filterLogs(rows []logRow, q map[string][]string, since time.Time) []logRow {
-	get := func(k string) string {
-		if v := q[k]; len(v) > 0 {
-			return v[0]
-		}
-		return ""
-	}
-	stage, model, provider, keyID := get(fieldStage), get(fieldModel), get(fieldProvider), get(fieldAPIKeyID)
+func filterLogs(rows []logRow, q url.Values, since time.Time) []logRow {
+	stage, model, provider, keyID := q.Get(fieldStage), q.Get(fieldModel), q.Get(fieldProvider), q.Get(fieldAPIKeyID)
 
 	// `since` is what a live tail advances on: Follower re-sends its cursor
 	// every poll and expects to be given only what is newer. Echoing the
@@ -523,14 +517,8 @@ func filterLogs(rows []logRow, q map[string][]string, since time.Time) []logRow 
 // real query's WHERE clause never adds one — internal/requestlog/store.go's
 // SQLWriter.Stats) and no api_key_id filter (the real handler never reads
 // one), so this is deliberately not filterLogs with a parameter dropped.
-func filterStats(rows []logRow, q map[string][]string, since time.Time) []logRow {
-	get := func(k string) string {
-		if v := q[k]; len(v) > 0 {
-			return v[0]
-		}
-		return ""
-	}
-	stage, model, provider := get(fieldStage), get(fieldModel), get(fieldProvider)
+func filterStats(rows []logRow, q url.Values, since time.Time) []logRow {
+	stage, model, provider := q.Get(fieldStage), q.Get(fieldModel), q.Get(fieldProvider)
 
 	out := make([]logRow, 0, len(rows))
 	for _, row := range rows {
@@ -778,23 +766,17 @@ func auditRows() []map[string]any {
 	}
 }
 
-func filterAudit(rows []map[string]any, q map[string][]string, since time.Time) []map[string]any {
-	get := func(k string) string {
-		if v := q[k]; len(v) > 0 {
-			return v[0]
-		}
-		return ""
-	}
+func filterAudit(rows []map[string]any, q url.Values, since time.Time) []map[string]any {
 	out := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
 		occurred, _ := time.Parse(time.RFC3339Nano, stringValue(row[fieldOccurredAt]))
-		if action := get("action"); action != "" && stringValue(row["action"]) != action {
+		if action := q.Get("action"); action != "" && stringValue(row["action"]) != action {
 			continue
 		}
-		if actorID := get(fieldActorID); actorID != "" && stringValue(row[fieldActorID]) != actorID {
+		if actorID := q.Get(fieldActorID); actorID != "" && stringValue(row[fieldActorID]) != actorID {
 			continue
 		}
-		if outcome := get(fieldOutcome); outcome != "" && stringValue(row[fieldOutcome]) != outcome {
+		if outcome := q.Get(fieldOutcome); outcome != "" && stringValue(row[fieldOutcome]) != outcome {
 			continue
 		}
 		if !since.IsZero() && occurred.Before(since) {
