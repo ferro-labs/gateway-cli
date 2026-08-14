@@ -223,9 +223,16 @@ func (c *Client) do(ctx context.Context, method, p string, q url.Values, in, out
 			RedirectTo: resp.Header.Get("Location"),
 		}
 	}
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
+	// Read one byte past maxBody: LimitReader itself is silent about a
+	// truncation, and a truncated JSON body would otherwise fail inside
+	// json.Unmarshal as "decode response" — a report that sends an operator
+	// looking for a malformed payload instead of an oversized one.
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
 	if err != nil {
 		return resp.StatusCode, fmt.Errorf("read response: %w", err)
+	}
+	if len(raw) > maxBody {
+		return resp.StatusCode, fmt.Errorf("response exceeded the %d-byte limit", maxBody)
 	}
 	ok := resp.StatusCode >= 200 && resp.StatusCode < 300
 	if !ok && !slices.Contains(o.tolerate, resp.StatusCode) {
@@ -244,8 +251,17 @@ func (c *Client) do(ctx context.Context, method, p string, q url.Values, in, out
 	return resp.StatusCode, nil
 }
 
+// maxErrMessage bounds the fallback error message built from a raw,
+// non-envelope body. Without a cap, a proxy's HTML error page or a stack
+// trace flows into terminal output and logs unbounded.
+const maxErrMessage = 2048
+
 func decodeAPIError(status int, raw []byte) *Error {
-	e := &Error{Status: status, Message: strings.TrimSpace(string(raw))}
+	msg := strings.TrimSpace(string(raw))
+	if len(msg) > maxErrMessage {
+		msg = msg[:maxErrMessage] + "… (truncated)"
+	}
+	e := &Error{Status: status, Message: msg}
 	var env struct {
 		Error struct {
 			Message string `json:"message"`

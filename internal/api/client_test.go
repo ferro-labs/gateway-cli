@@ -19,7 +19,7 @@ func TestBearerHeaderSentAndOmitted(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, _ := New(srv.URL, "fgw_secret")
+	c := testClient(t, srv.URL, "fgw_secret")
 	var out map[string]any
 	if _, err := c.do(context.Background(), http.MethodGet, "/x", nil, nil, &out, doOpts{}); err != nil {
 		t.Fatal(err)
@@ -28,7 +28,7 @@ func TestBearerHeaderSentAndOmitted(t *testing.T) {
 		t.Fatalf("want bearer header, got %q", got)
 	}
 
-	c2, _ := New(srv.URL, "")
+	c2 := testClient(t, srv.URL, "")
 	if _, err := c2.do(context.Background(), http.MethodGet, "/x", nil, nil, &out, doOpts{}); err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestRedirectRefusedNeverFollowed(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, _ := New(srv.URL, "fgw_secret")
+	c := testClient(t, srv.URL, "fgw_secret")
 	var out map[string]any
 	_, err := c.do(context.Background(), http.MethodGet, "/x", nil, nil, &out, doOpts{})
 	var apiErr *Error
@@ -68,7 +68,7 @@ func TestEmpty2xxWithExpectedPayloadIsError(t *testing.T) {
 		w.WriteHeader(http.StatusOK) // no body
 	}))
 	defer srv.Close()
-	c, _ := New(srv.URL, "")
+	c := testClient(t, srv.URL, "")
 	var out map[string]any
 	_, err := c.do(context.Background(), http.MethodGet, "/x", nil, nil, &out, doOpts{})
 	if err == nil || !strings.Contains(err.Error(), "empty response body") {
@@ -81,7 +81,7 @@ func Test204WithNilDestIsSuccess(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer srv.Close()
-	c, _ := New(srv.URL, "")
+	c := testClient(t, srv.URL, "")
 	if _, err := c.do(context.Background(), http.MethodDelete, "/x", nil, nil, nil, doOpts{}); err != nil {
 		t.Fatalf("204 with nil dest must succeed: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestErrorEnvelopeDecoded(t *testing.T) {
 			`{"error":{"message":"bad key","type":"authentication_error","code":"unauthorized"}}`)
 	}))
 	defer srv.Close()
-	c, _ := New(srv.URL, "fgw_bad")
+	c := testClient(t, srv.URL, "fgw_bad")
 	var out map[string]any
 	_, err := c.do(context.Background(), http.MethodGet, "/x", nil, nil, &out, doOpts{})
 	var apiErr *Error
@@ -108,7 +108,7 @@ func TestTolerated503DecodesBody(t *testing.T) {
 			`{"status":"not_ready","reason":"no routable targets"}`)
 	}))
 	defer srv.Close()
-	c, _ := New(srv.URL, "")
+	c := testClient(t, srv.URL, "")
 	var out struct {
 		Status string `json:"status"`
 		Reason string `json:"reason"`

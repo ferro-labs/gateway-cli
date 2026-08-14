@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -69,10 +71,16 @@ func content(events []StreamEvent) string {
 }
 
 func TestStreamChatHappyPath(t *testing.T) {
+	// The handler runs in its own goroutine; the streamed response body is
+	// what the test goroutine synchronizes on to read the events, not these
+	// captured request facts, so they need their own guard.
+	var mu sync.Mutex
 	var gotBody, gotAccept, gotAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
+		mu.Lock()
 		gotBody, gotAccept, gotAuth = string(raw), r.Header.Get("Accept"), r.Header.Get("Authorization")
+		mu.Unlock()
 		writeSSE(w, "trace-abc",
 			frame(`{"id":"c1","object":"chat.completion.chunk","created":100,"model":"m","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}`),
 			frame(`{"id":"c1","object":"chat.completion.chunk","created":100,"model":"m","choices":[{"index":0,"delta":{"content":"Hello "},"finish_reason":null}]}`),
@@ -122,11 +130,14 @@ func TestStreamChatHappyPath(t *testing.T) {
 		t.Fatalf("RequestID = %q, want the X-Request-ID header", st.RequestID)
 	}
 	// The request itself: stream is forced on, and the SSE surface is asked for.
-	if !strings.Contains(gotBody, `"stream":true`) {
-		t.Fatalf("StreamChat must force stream:true, body was %s", gotBody)
+	mu.Lock()
+	body, accept, auth := gotBody, gotAccept, gotAuth
+	mu.Unlock()
+	if !strings.Contains(body, `"stream":true`) {
+		t.Fatalf("StreamChat must force stream:true, body was %s", body)
 	}
-	if gotAccept != "text/event-stream" || gotAuth != "Bearer fgw_secret" {
-		t.Fatalf("accept=%q auth=%q", gotAccept, gotAuth)
+	if accept != "text/event-stream" || auth != "Bearer fgw_secret" {
+		t.Fatalf("accept=%q auth=%q", accept, auth)
 	}
 }
 
@@ -443,9 +454,10 @@ func TestStreamChatURLMatchesDoResolutionForPathPrefixedBase(t *testing.T) {
 	// (see client.go), so a path-prefixed --gateway-url cannot land the
 	// request on a different path than every other endpoint — in particular
 	// it cannot produce a double slash on the streaming path.
-	var gotPath string
+	var gotPath atomic.Pointer[string]
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
+		p := r.URL.Path
+		gotPath.Store(&p)
 		writeSSE(w, "trace-prefix", doneFrame)
 	}))
 	defer srv.Close()
@@ -463,19 +475,23 @@ func TestStreamChatURLMatchesDoResolutionForPathPrefixedBase(t *testing.T) {
 		st.Cancel()
 
 		want := "/ferro/v1/chat/completions"
-		if gotPath != want {
-			t.Fatalf("base %q: request path = %q, want %q (no double slash)", srv.URL+suffix, gotPath, want)
+		var got string
+		if p := gotPath.Load(); p != nil {
+			got = *p
 		}
-		if strings.Contains(gotPath, "//") {
-			t.Fatalf("base %q: request path %q contains a double slash", srv.URL+suffix, gotPath)
+		if got != want {
+			t.Fatalf("base %q: request path = %q, want %q (no double slash)", srv.URL+suffix, got, want)
+		}
+		if strings.Contains(got, "//") {
+			t.Fatalf("base %q: request path %q contains a double slash", srv.URL+suffix, got)
 		}
 	}
 }
 
 func TestTraceAttribution(t *testing.T) {
-	var calls int
+	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
+		calls.Add(1)
 		if r.URL.Path != "/admin/logs" {
 			t.Errorf("attribution must read /admin/logs, got %s", r.URL.Path)
 		}
@@ -500,9 +516,9 @@ func TestTraceAttribution(t *testing.T) {
 		t.Fatalf("a missing row is (nil, nil) — log writes lag: got %+v, %v", row, err)
 	}
 
-	before := calls
-	if row, err = c.TraceAttribution(context.Background(), "", time.Time{}); row != nil || err != nil || calls != before {
-		t.Fatalf("an empty trace id must answer (nil, nil) without a request: %+v %v calls=%d", row, err, calls-before)
+	before := calls.Load()
+	if row, err = c.TraceAttribution(context.Background(), "", time.Time{}); row != nil || err != nil || calls.Load() != before {
+		t.Fatalf("an empty trace id must answer (nil, nil) without a request: %+v %v calls=%d", row, err, calls.Load()-before)
 	}
 }
 
