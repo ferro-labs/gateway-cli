@@ -303,6 +303,25 @@ func TestHeaderRendersRealStatusOnly(t *testing.T) {
 	}
 }
 
+// The header's three columns are measured, not spaced by eye: the readout has
+// to land on the last cell of the screen at any width, or it drifts away from
+// the right edge the moment a URL or a profile name changes length.
+func TestHeaderReadoutIsFlushRight(t *testing.T) {
+	for _, w := range []int{110, 126, 200} {
+		a := testApp(w, 40)
+		for i, line := range strings.Split(a.viewBrandBlock(), "\n") {
+			if got := lipgloss.Width(line); got != w {
+				t.Fatalf("width %d: header row %d is %d cells, must fill exactly %d:\n%q", w, i, got, w, line)
+			}
+		}
+		want := "23ms round trip"
+		row := findRow(a.viewBrandBlock(), want)
+		if !strings.HasSuffix(row, want) {
+			t.Fatalf("width %d: readout must sit flush right, got %q", w, row)
+		}
+	}
+}
+
 func TestUnreachableStateGetsBadGlyph(t *testing.T) {
 	a := testApp(126, 40)
 	a.Status = &api.StatusReport{State: "unreachable", URL: "http://localhost:8080"}

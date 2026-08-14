@@ -52,6 +52,7 @@ const (
 	mediumMin = 80  // compact brand + STATUS frame
 	railWidth = 34
 	railGap   = 2
+	markGap   = 3 // between the mark panel and the text stack beside it
 
 	// minSplitWidth is the narrowest main frame that can carry the
 	// TARGETS│TRAFFIC split header with both titles and a closing rule.
@@ -375,18 +376,42 @@ func (a *App) render() string {
 	return b.String()
 }
 
-// viewBrandBlock is the wide home header: the split-F mark beside the text
-// stack. Every value in it is real — see stateLine and originLine.
+// viewBrandBlock is the wide home header: the split-F panel, the text stack,
+// and the connection readout flush against the right edge. Identity reads
+// left, live state reads right, and the two never compete for the same line.
+// Every value in it is real — see stateBlock and originLine.
 func (a *App) viewBrandBlock() string {
-	stackW := max(a.Width-lipgloss.Width(theme.Mark(a.Theme))-3, 10)
-	stack := strings.Join(clampLines([]string{
+	mark := theme.Mark(a.Theme)
+	state := a.stateBlock()
+	stateW := 0
+	for _, l := range state {
+		stateW = max(stateW, lipgloss.Width(l))
+	}
+	// The three columns are measured to total exactly a.Width, so the readout
+	// lands on the last cell of the screen however long the URL is; the stack
+	// is the column that gives, because it is the one that can truncate
+	// without losing a fact.
+	stackW := max(a.Width-lipgloss.Width(mark)-markGap-stateW, 10)
+	stack := clampLines([]string{
 		a.brand() + " " + a.Theme.Dim.Render(version.Version),
 		a.Theme.Border.Render(a.rule(10)),
 		a.Theme.Text.Render("AI Gateway"),
-		a.stateLine(),
 		a.Theme.Dim.Render(a.originLine()),
-	}, stackW), "\n")
-	return lipgloss.JoinHorizontal(lipgloss.Top, theme.Mark(a.Theme), "   ", stack)
+	}, stackW)
+	for i, l := range stack {
+		stack[i] = padRight(l, stackW)
+	}
+	// One blank row first: the readout sits against the stack's body rather
+	// than level with the wordmark, which owns the top line alone.
+	col := []string{""}
+	for _, l := range state {
+		col = append(col, padLeft(l, stateW))
+	}
+	// Centred: the panel stands one row taller than the text at each end, so
+	// the stack sits inside its span rather than hanging off its top border.
+	return lipgloss.JoinHorizontal(lipgloss.Center,
+		mark, strings.Repeat(" ", markGap),
+		strings.Join(stack, "\n"), strings.Join(col, "\n"))
 }
 
 // compactBrand is the one-line header every other width and screen gets: the
@@ -402,25 +427,54 @@ func (a *App) brand() string {
 	return a.Theme.Bright.Bold(a.Theme.Mode.Color).Render("Ferro Labs")
 }
 
-// stateLine is the connection readout: glyph and colour from the report's own
-// state, then profile, URL and the client-measured round trip. When the last
-// poll failed the line keeps its data and gains a staleness age.
-func (a *App) stateLine() string {
+// stateGlyph is the connection state as glyph, label and colour, taken from
+// the report's own state. Both headers read it, so the compact line and the
+// wide block can never disagree about what the gateway is doing.
+func (a *App) stateGlyph() (string, string, lipgloss.Style) {
 	g := a.Theme.Mode.Glyphs()
-	glyph, label, style := g.None, "connecting", a.Theme.Dim
-	if a.Status != nil {
-		switch a.Status.State {
-		case stateConnected:
-			glyph, label, style = g.Dot, stateConnected, a.Theme.OK
-		case stateDegraded:
-			glyph, label, style = g.Warn, stateDegraded, a.Theme.Warn
-		default:
-			glyph, label, style = g.Bad, a.Status.State, a.Theme.Bad
+	if a.Status == nil {
+		if a.StatusErr != nil {
+			return g.Bad, stateUnreachable, a.Theme.Bad
 		}
-	} else if a.StatusErr != nil {
-		glyph, label, style = g.Bad, stateUnreachable, a.Theme.Bad
+		return g.None, "connecting", a.Theme.Dim
 	}
+	switch a.Status.State {
+	case stateConnected:
+		return g.Dot, stateConnected, a.Theme.OK
+	case stateDegraded:
+		return g.Warn, stateDegraded, a.Theme.Warn
+	}
+	return g.Bad, a.Status.State, a.Theme.Bad
+}
 
+// stateBlock is the wide header's right-hand readout: state, origin, round
+// trip — one fact per line so the eye lands on the state before the URL. Same
+// data stateLine carries, laid out for a column instead of a line.
+func (a *App) stateBlock() []string {
+	glyph, label, style := a.stateGlyph()
+	origin := a.url()
+	if a.Profile.ProfileName != "" {
+		origin = a.Profile.ProfileName + " · " + origin
+	}
+	lines := []string{style.Render(glyph + " " + label), a.Theme.Dim.Render(origin)}
+	// A failed poll takes the third line: how old the data is matters more
+	// than how fast the request that fetched it was.
+	switch {
+	case a.StatusErr != nil && !a.StatusAt.IsZero():
+		lines = append(lines, a.Theme.Dim.Render(fmt.Sprintf("stale %ds", int(time.Since(a.StatusAt).Seconds()))))
+	case a.StatusErr != nil:
+		lines = append(lines, a.Theme.Dim.Render("stale"))
+	case a.Status != nil && a.Status.LatencyMs > 0:
+		lines = append(lines, a.Theme.Dim.Render(fmt.Sprintf("%dms round trip", a.Status.LatencyMs)))
+	}
+	return lines
+}
+
+// stateLine is the one-line connection readout: glyph and colour from the
+// report's own state, then profile, URL and the client-measured round trip.
+// When the last poll failed the line keeps its data and gains a staleness age.
+func (a *App) stateLine() string {
+	glyph, label, style := a.stateGlyph()
 	parts := []string{}
 	if a.Profile.ProfileName != "" {
 		parts = append(parts, a.Profile.ProfileName)

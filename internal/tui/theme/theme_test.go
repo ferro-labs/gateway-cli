@@ -73,6 +73,41 @@ func TestMarkShape(t *testing.T) {
 	}
 }
 
+// The mark is folded two art rows to a text row so it stands level with the
+// four header lines beside it. The fold must lose nothing: half the height,
+// the full width, and every inked column still inked.
+func TestMarkFoldsToHalfHeight(t *testing.T) {
+	rows := foldedArt()
+	if want := (len(MarkRows) + 1) / 2; len(rows) != want {
+		t.Fatalf("mark folded to %d rows, want %d", len(rows), want)
+	}
+	art := markArt()
+	widest, folded := 0, 0
+	for _, r := range art {
+		widest = max(widest, lipgloss.Width(r))
+	}
+	for _, r := range rows {
+		folded = max(folded, lipgloss.Width(r))
+	}
+	if folded != widest {
+		t.Fatalf("fold is %d cells wide, art is %d — the shape lost columns", folded, widest)
+	}
+}
+
+func TestFoldPairsRowsIntoHalfBlocks(t *testing.T) {
+	for _, c := range []struct{ top, bottom, want string }{
+		{"██", "██", "██"},   // both inked → full cell
+		{"██", "", "▀▀"},     // top only → upper half
+		{"", "██", "▄▄"},     // bottom only → lower half
+		{"█ █", "██", "█▄▀"}, // mixed, decided per column
+		{"", "", ""},
+	} {
+		if got := fold(c.top, c.bottom); got != c.want {
+			t.Fatalf("fold(%q, %q) = %q, want %q", c.top, c.bottom, got, c.want)
+		}
+	}
+}
+
 func TestMarkIsASCIIInASCIIMode(t *testing.T) {
 	for _, r := range Mark(New(Mode{ASCII: true})) {
 		if r > unicode.MaxASCII {

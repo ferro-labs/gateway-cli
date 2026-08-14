@@ -183,14 +183,88 @@ var MarkRows = []string{
 	markStem,
 }
 
-// Mark renders the split-F in the accent color.
+// Mark is the split-F in a rounded panel, drawn two art rows to a text row.
+//
+// A terminal cell is about twice as tall as it is wide, so the art drawn one
+// row per row stands seven lines high — nine inside a panel — beside four
+// lines of header text, and reads as a billboard. Half blocks fold it: ▀ inks
+// the top half of a cell and ▄ the bottom, so each text row carries two art
+// rows and the panel lands six rows over fourteen columns, close enough to
+// square on screen. The fold is exact, not a downsample; no art row is dropped
+// or merged away.
+//
+// The panel is what keeps the mark off the screen's corner: without it the art
+// starts on the first cell of the first row with nothing around it.
+//
+// Under --ascii there are no half blocks and no panel — 2h falls below
+// minFrameWidth, so FrameRound hands back the letter the mark degrades to.
 func Mark(t Theme) string {
 	if t.Mode.ASCII {
 		return t.Accent.Render("F")
 	}
-	rows := make([]string, len(MarkRows))
-	for i, r := range MarkRows {
+	art := foldedArt()
+	widest := 0
+	for _, r := range art {
+		widest = max(widest, lipgloss.Width(r))
+	}
+	rows := make([]string, len(art))
+	for i, r := range art {
 		rows[i] = t.Accent.Render(r)
 	}
-	return strings.Join(rows, "\n")
+	// widest + 4: the panel's two border cells and the padding cell FrameRound
+	// sets inside each of them.
+	return t.FrameRound(strings.Join(rows, "\n"), widest+4)
+}
+
+// foldedArt is the canonical rows paired off into half-block text rows.
+func foldedArt() []string {
+	art := markArt()
+	rows := make([]string, 0, (len(art)+1)/2)
+	for i := 0; i < len(art); i += 2 {
+		bottom := "" // an odd row count leaves the last text row a top half only
+		if i+1 < len(art) {
+			bottom = art[i+1]
+		}
+		rows = append(rows, fold(art[i], bottom))
+	}
+	return rows
+}
+
+// fold merges two art rows into one text row of half blocks: a cell is full
+// when both rows ink it, a top or bottom half when one does, blank when
+// neither.
+func fold(topRow, bottomRow string) string {
+	top, bottom := []rune(topRow), []rune(bottomRow)
+	out := make([]rune, 0, max(len(top), len(bottom)))
+	for i := range max(len(top), len(bottom)) {
+		inkedTop := i < len(top) && top[i] != ' '
+		inkedBottom := i < len(bottom) && bottom[i] != ' '
+		switch {
+		case inkedTop && inkedBottom:
+			out = append(out, '█')
+		case inkedTop:
+			out = append(out, '▀')
+		case inkedBottom:
+			out = append(out, '▄')
+		default:
+			out = append(out, ' ')
+		}
+	}
+	return strings.TrimRight(string(out), " ")
+}
+
+// markArt is MarkRows with the shared left margin the SVG sample carried
+// measured off, so the mark starts on its own first inked column. The shape is
+// untouched: every row loses the same count, so the split arms keep their
+// overhang. Byte slicing is safe because the margin is all spaces.
+func markArt() []string {
+	indent := len(MarkRows[0])
+	for _, r := range MarkRows {
+		indent = min(indent, len(r)-len(strings.TrimLeft(r, " ")))
+	}
+	out := make([]string, len(MarkRows))
+	for i, r := range MarkRows {
+		out[i] = r[indent:]
+	}
+	return out
 }
