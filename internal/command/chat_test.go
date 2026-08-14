@@ -258,7 +258,7 @@ func TestStreamFailureWording(t *testing.T) {
 		err  api.Error
 		want string
 	}{
-		{"timeout", api.Error{Code: api.CodeStreamTimeout}, "stream idled out — the gateway closed it after its idle bound elapsed"},
+		{"timeout", api.Error{Code: api.CodeStreamTimeout}, "stream idled out — the gateway sent no events for 2m0s, so ferro closed the connection"},
 		{"incomplete", api.Error{Code: api.CodeStreamIncomplete}, "stream ended mid-answer — output is truncated"},
 		{"error", api.Error{Code: api.CodeStreamError, Message: "upstream exploded"}, "stream failed: upstream exploded"},
 	}

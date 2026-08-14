@@ -104,12 +104,13 @@ type ChatStream struct {
 	Cancel    context.CancelFunc
 }
 
-// Stream error codes. The first two are the gateway's own, sent inside an
-// error frame; the third is ferro's, synthesized when the connection ends with
-// neither a terminator nor an explanation.
+// Stream error codes. Only the first is the gateway's own, sent inside an
+// error frame; the other two are ferro's, synthesized locally. Reading
+// stream_timeout as the gateway's verdict is what put "the gateway closed it"
+// into two operator-facing messages for a bound the gateway never saw.
 const (
 	CodeStreamError      = "stream_error"      // gateway: the upstream or the pipeline failed
-	CodeStreamTimeout    = "stream_timeout"    // gateway: the idle bound elapsed
+	CodeStreamTimeout    = "stream_timeout"    // client: this client's idle bound elapsed
 	CodeStreamIncomplete = "stream_incomplete" // client: connection ended without [DONE]
 
 	// DefaultStreamIdleTimeout prevents a connected-but-silent upstream from

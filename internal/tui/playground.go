@@ -536,7 +536,12 @@ func (s *playScreen) metaCmd(a *App) tea.Cmd {
 func streamFailure(e *api.Error) string {
 	switch e.Code {
 	case api.CodeStreamTimeout:
-		return "gateway: stream idled out (gateway bound: 2m)"
+		// Neither "gateway:" nor a hand-written 2m: the idle timer is ferro's
+		// own (api.DefaultStreamIdleTimeout), so the gateway is not who gave
+		// up, and a duration typed out here drifts the moment the constant
+		// moves. `ferro chat` says the same thing from the same constant.
+		return fmt.Sprintf("stream idled out — the gateway sent no events for %s, so ferro closed the connection",
+			api.DefaultStreamIdleTimeout)
 	case api.CodeStreamIncomplete:
 		return "gateway: stream ended mid-answer with no terminator — the answer above is truncated"
 	}

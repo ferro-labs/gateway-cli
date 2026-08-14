@@ -229,10 +229,11 @@ func runChat(cmd *cobra.Command, model, system, prompt string) error {
 func streamFailure(e *api.Error) error {
 	switch e.Code {
 	case api.CodeStreamTimeout:
-		// The bound itself is the gateway's, configurable there and not
-		// reported on the wire, so naming a duration here would be a guess an
-		// operator reads during the incident it is wrong in.
-		return errors.New("stream idled out — the gateway closed it after its idle bound elapsed")
+		// The bound is ferro's own client-side idle timer (api.
+		// DefaultStreamIdleTimeout) — the gateway takes no part in the
+		// decision, so the duration is a fact this process knows, not a guess.
+		return fmt.Errorf("stream idled out — the gateway sent no events for %s, so ferro closed the connection",
+			api.DefaultStreamIdleTimeout)
 	case api.CodeStreamIncomplete:
 		return errors.New("stream ended mid-answer — output is truncated")
 	default:
