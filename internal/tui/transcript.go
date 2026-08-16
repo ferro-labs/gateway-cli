@@ -6,6 +6,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/ferro-labs/gateway-cli/internal/table"
 	"github.com/ferro-labs/gateway-cli/internal/tui/theme"
 )
 
@@ -109,7 +110,7 @@ func (r TranscriptRow) render(th theme.Theme, w, gw int) string {
 	if r.Bold {
 		text = text.Bold(th.Mode.Color)
 	}
-	line := padRight(glyphCell(th, r.Glyph), gw) + " " + text.Render(r.Text)
+	line := padRight(glyphCell(th, r.Glyph), gw) + " " + text.Render(table.SanitizeCell(r.Text))
 	// A row wider than the pane is cut, never wrapped — wrapping would break
 	// the pane's line count and every frame below it. The marker is what keeps
 	// the cut from reading as the end of the row.

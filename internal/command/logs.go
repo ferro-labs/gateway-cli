@@ -289,7 +289,7 @@ func formatLogLine(e api.LogEntry) string {
 // string but disappears under an `awk`-style whitespace split, silently
 // shifting every column after it.
 func oneField(s string) string {
-	f := strings.Fields(s)
+	f := strings.Fields(table.SanitizeCell(s))
 	if len(f) == 0 {
 		return "-"
 	}
@@ -302,7 +302,7 @@ func oneField(s string) string {
 // a script indexes into by position -- and only a literal newline or tab
 // inside it can break the one-line contract.
 func oneLine(s string) string {
-	return strings.Join(strings.Fields(s), " ")
+	return strings.Join(strings.Fields(table.SanitizeCell(s)), " ")
 }
 
 // fmtMillis and fmtCost keep the nullable-measurement rule in one place: the

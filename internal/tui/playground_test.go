@@ -617,3 +617,64 @@ func TestInlineChatReleasesThePromptWhenDiscoveryFails(t *testing.T) {
 		t.Fatalf("a failed listing must not swallow the prompt, got %+v", a.Play.turns)
 	}
 }
+
+// A streamed answer is model-supplied text, and wrapPlain is deliberately
+// ANSI-AWARE: it preserved a \x1b[2J (clear screen) and an OSC window-title
+// change straight into the frame. That is terminal control forwarded from an
+// upstream provider into the operator's session, and a pane that no longer owes
+// exactly rows lines.
+func TestAnswerEscapesNeverReachTheFrame(t *testing.T) {
+	a := composerApp()
+	a.route("playground")
+	a.Play.renderer = wrapPlain
+	a.Play.submit(a, "hello")
+	a.update(chatDeltaMsg{gen: a.Play.gen, text: "\x1b[2Jcleared\x1b]0;pwned\x07titled\nsecond line"})
+	a.update(flushTickMsg{gen: a.Play.gen})
+
+	turn := lastTurn(a)
+	// Text is the conversation history sent back to the gateway and stays as
+	// the model wrote it. What must be inert is the RENDERED lines.
+	if !strings.Contains(turn.Text, "\x1b[2J") {
+		t.Fatalf("the turn keeps the model's own text verbatim, got %q", turn.Text)
+	}
+	if len(turn.lines) < 2 {
+		t.Fatalf("the answer's own newline must still split the body: %q", turn.lines)
+	}
+	for i, line := range turn.lines {
+		if strings.ContainsRune(line, 0x1b) {
+			t.Fatalf("rendered line %d still carries an escape: %q", i, line)
+		}
+	}
+
+	const rows = 12
+	body := a.paneView(80, rows)
+	if strings.ContainsRune(body, 0x1b) {
+		t.Fatalf("an escape from the model reached the frame: %q", body)
+	}
+	if got := len(strings.Split(body, "\n")); got != rows {
+		t.Fatalf("the pane owes exactly %d lines, got %d", rows, got)
+	}
+	for i, line := range strings.Split(body, "\n") {
+		if lw := lipgloss.Width(line); lw > 80 {
+			t.Fatalf("line %d overflows: %d cells %q", i, lw, line)
+		}
+	}
+	if !strings.Contains(body, "cleared") || !strings.Contains(body, "second line") {
+		t.Fatalf("the answer's own words must survive sanitising:\n%s", body)
+	}
+}
+
+// nearest slices what the OPERATOR typed. Three bytes is one character of a
+// CJK name — and can land mid-rune — so the near miss it offered was a byte
+// accident rather than the three-character prefix it reads as.
+func TestNearestMatchesOnRunesNotBytes(t *testing.T) {
+	s := playScreen{models: []string{"日本語-alpha", "日本語-beta", "日本-gamma", "gpt-4o"}}
+	got := s.nearest("日本語-zeta")
+	if len(got) != 2 || got[0] != "日本語-alpha" || got[1] != "日本語-beta" {
+		t.Fatalf("want the three-character near misses, got %v", got)
+	}
+	// Shorter than three runes is still its whole self, not a panic.
+	if got := s.nearest("日"); len(got) != 3 {
+		t.Fatalf("a one-character name prefixes all three, got %v", got)
+	}
+}

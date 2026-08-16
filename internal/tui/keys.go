@@ -662,7 +662,7 @@ func rowLine(cols []column, cells []cell) string {
 		if i >= len(cells) {
 			break
 		}
-		v := cells[i].v
+		v := table.SanitizeCell(cells[i].v)
 		if c.right {
 			v = padLeft(v, c.w)
 		} else {
@@ -699,10 +699,11 @@ func detailStrip(a *App, title string, rows []ModalKV, w int) []string {
 	th := a.Theme
 	out := append(make([]string, 0, 2+len(rows)),
 		th.Border.Render(a.rule(max(w, 0))),
-		gapPad(w, th.Bright.Bold(th.Mode.Color).Render(title), th.Dim.Render("esc close")),
+		gapPad(w, th.Bright.Bold(th.Mode.Color).Render(table.SanitizeCell(title)), th.Dim.Render("esc close")),
 	)
 	for _, r := range rows {
-		out = append(out, th.Dim.Render(padRight(r.K, modalKeyCol))+kvStyle(th, r).Render(r.V))
+		out = append(out, th.Dim.Render(padRight(table.SanitizeCell(r.K), modalKeyCol))+
+			kvStyle(th, r).Render(table.SanitizeCell(r.V)))
 	}
 	return clampLines(out, w)
 }

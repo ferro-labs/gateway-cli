@@ -157,3 +157,33 @@ func TestFmtTimePtr(t *testing.T) {
 		t.Fatalf("FmtTimePtr(&t) = %q, want %q", got, want)
 	}
 }
+
+// SanitizeCell and SanitizeText are the one vocabulary every surface that
+// renders a gateway string shares. They differ on LF alone: a line break is
+// injected layout in a table cell and content in a streamed body.
+func TestSanitizeCellAndText(t *testing.T) {
+	for _, tc := range []struct {
+		name, in, cell, text string
+	}{
+		{"a clean value is untouched", "anthropic", "anthropic", "anthropic"},
+		{"tab", "a\tb", "a b", "a b"},
+		{"carriage return", "a\rb", "a b", "a b"},
+		{"newline is layout in a cell, content in a body", "a\nb", "a b", "a\nb"},
+		{"the ESC that starts a colour sequence", "a\x1b[31mb", "a [31mb", "a [31mb"},
+		{"the ESC that starts an OSC title write", "a\x1b]0;pwned", "a ]0;pwned", "a ]0;pwned"},
+		{"BEL, which rings the terminal on its own", "a\x07b", "a b", "a b"},
+		{"NUL", "a\x00b", "a b", "a b"},
+		{"DEL", "a\x7fb", "a b", "a b"},
+		{"the C1 CSI, which opens a sequence without an ESC", "a\u009b31mb", "a 31mb", "a 31mb"},
+		{"a multi-byte rune is not a control character", "日本語", "日本語", "日本語"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := SanitizeCell(tc.in); got != tc.cell {
+				t.Errorf("SanitizeCell(%q) = %q, want %q", tc.in, got, tc.cell)
+			}
+			if got := SanitizeText(tc.in); got != tc.text {
+				t.Errorf("SanitizeText(%q) = %q, want %q", tc.in, got, tc.text)
+			}
+		})
+	}
+}

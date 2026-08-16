@@ -16,18 +16,10 @@ import (
 	"text/tabwriter"
 )
 
-// tableCellReplacer neutralizes control characters a gateway-provided cell
-// (a provider name, a plugin summary, an upstream error message) could carry:
-// a tab or newline would inject a column or row into the layout below, and
-// ESC starts a terminal escape sequence this package has no business passing
-// through to whatever is reading stdout. Cell text is data, not layout or
-// terminal control, so all four collapse to a single space.
-var tableCellReplacer = strings.NewReplacer("\t", " ", "\r", " ", "\n", " ", "\x1b", " ")
-
 func normalizeCells(cells []string) []string {
 	out := make([]string, len(cells))
 	for i, c := range cells {
-		out[i] = tableCellReplacer.Replace(c)
+		out[i] = SanitizeCell(c)
 	}
 	return out
 }

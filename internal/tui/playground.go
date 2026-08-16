@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ferro-labs/gateway-cli/internal/api"
+	"github.com/ferro-labs/gateway-cli/internal/table"
 )
 
 // The playground is a streamed chat with the route metadata a gateway operator
@@ -248,9 +249,16 @@ func (s *playScreen) setModel(a *App, id string) {
 // nearest offers the models closest to what was typed: shared prefix first,
 // then the head of the list, so a refusal always names something runnable.
 func (s *playScreen) nearest(id string) []string {
+	// Three RUNES, not three bytes. id is whatever the operator typed, so a
+	// byte slice cuts a non-ASCII name at an arbitrary point: for a CJK name
+	// three bytes is ONE character, which matches far more than the near miss
+	// this reads as, and for other scripts it lands mid-rune and the comparison
+	// becomes a byte accident. Hoisted out of the loop while it is here.
+	head := []rune(id)
+	prefix := string(head[:min(len(head), 3)])
 	var out []string
 	for _, m := range s.models {
-		if strings.HasPrefix(m, id[:min(len(id), 3)]) {
+		if strings.HasPrefix(m, prefix) {
 			out = append(out, m)
 		}
 	}
@@ -648,6 +656,16 @@ func (s *playScreen) wrap(text string) []string {
 	if text == "" {
 		return nil
 	}
+	// The one chokepoint where model-supplied text becomes rendered lines:
+	// submit, flush and markFailed all arrive here, so this is where an answer
+	// stops being able to drive the terminal. wrapPlain is deliberately
+	// ANSI-AWARE and would carry a \x1b[2J or an OSC title change straight into
+	// the frame, breaking both the pane's exact-line contract and the rule that
+	// this tool forwards no terminal control from an upstream provider. LF
+	// survives — an answer's own line breaks are meaningful and the split below
+	// is what honours them. Text itself is left untouched: it is what history()
+	// sends back to the gateway as the conversation.
+	text = table.SanitizeText(text)
 	w := max(s.width, 8)
 	out := text
 	if s.renderer != nil {

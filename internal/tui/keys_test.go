@@ -390,3 +390,25 @@ func TestKeysScreenKeepsThePaneContract(t *testing.T) {
 		}
 	}
 }
+
+// The keys pane owes the same exact line count, and a key name is gateway data
+// like any other: it is echoed into the table and into the detail strip.
+func TestKeysPaneKeepsItsLineCountWithControlCharactersInGatewayData(t *testing.T) {
+	a := composerApp()
+	a.Screen = ScreenKeys
+	a.Keys.keys = []api.Key{{
+		ID: "key_01", Name: "prod\ningest", Key: "fgw_abcd…9f21",
+		Scopes: []string{"admin\x1b[31m"}, Active: true, CreatedAt: time.Now(),
+	}}
+	a.Keys.sel, a.Keys.detail = 0, true
+
+	for _, rows := range []int{4, 9, 20} {
+		out := a.Keys.view(a, 100, rows)
+		if got := strings.Count(out, "\n") + 1; got != rows {
+			t.Fatalf("view(rows=%d) returned %d lines:\n%q", rows, got, out)
+		}
+		if strings.Contains(out, "\x1b") {
+			t.Fatalf("view(rows=%d) forwarded an escape sequence:\n%q", rows, out)
+		}
+	}
+}

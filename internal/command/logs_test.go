@@ -349,3 +349,26 @@ func TestLogsQueryFromFlagsPassesNoneSentinel(t *testing.T) {
 		t.Fatalf("the gateway's none sentinel must pass through untouched, got %q", q.APIKeyID)
 	}
 }
+
+// `logs tail` writes straight to stdout, and strings.Fields splits on
+// whitespace only — an ESC survives it untouched. A colour or OSC sequence an
+// upstream provider put in a name or an error_message is terminal control this
+// tool has no business forwarding to whatever is reading the pipe.
+func TestFormatLogLineStripsTerminalControl(t *testing.T) {
+	line := formatLogLine(api.LogEntry{
+		TraceID:      "tr_esc",
+		Provider:     "op\x1b[31mai",
+		Model:        "gpt-4o",
+		Stage:        "on_error",
+		ErrorMessage: "upstream said \x1b]0;pwned\x07 and \x1b[2J",
+	})
+	if strings.Contains(line, "\x1b") {
+		t.Fatalf("an escape sequence must never reach stdout: %q", line)
+	}
+	if strings.ContainsAny(line, "\n\r\t") {
+		t.Fatalf("tail rows must remain one line: %q", line)
+	}
+	if got := strings.Fields(line)[2]; got != "op_[31mai" {
+		t.Fatalf("a neutralized ESC must not widen the provider into a second column: %q (%q)", got, line)
+	}
+}

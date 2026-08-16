@@ -102,3 +102,22 @@ func TestTranscriptResetClearsTheDropMarker(t *testing.T) {
 		t.Fatalf("a cleared transcript has dropped nothing:\n%s", v)
 	}
 }
+
+// The transcript renders the gateway's own words — an api.Error message reaches
+// it whole. A newline in one must not add a line to a pane that owes exactly h,
+// and an ESC in one must not reach the terminal as a live sequence.
+func TestTranscriptRowWithGatewayControlCharactersKeepsTheLineCount(t *testing.T) {
+	th := theme.New(theme.Mode{})
+	var tr Transcript
+	tr.Push(TranscriptRow{Glyph: kindBad, Text: "gateway: upstream\nrefused \x1b[2J"})
+
+	for _, h := range []int{1, 5, 12} {
+		out := tr.view(th, 60, h)
+		if got := strings.Count(out, "\n") + 1; got != h {
+			t.Fatalf("view(h=%d) returned %d lines: %q", h, got, out)
+		}
+		if strings.Contains(out, "\x1b") {
+			t.Fatalf("view(h=%d) forwarded an escape sequence: %q", h, out)
+		}
+	}
+}
