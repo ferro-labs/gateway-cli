@@ -1,11 +1,26 @@
-# Ferro Operator Console
+<div align="center">
 
-**A scriptable CLI and interactive TUI for the [Ferro Labs AI Gateway](https://github.com/ferro-labs/ai-gateway).**
-One static binary that is both a scriptable CLI and a full-screen terminal
-console — health, request logs, API keys, and a live playground, without
-opening a browser.
+<table border="0" cellspacing="0" cellpadding="0"><tr>
+  <td rowspan="2"><img src="docs/logo.png" alt="Ferro Labs Gateway CLI" width="64" /></td>
+  <td align="center"><h1>Ferro Labs Gateway CLI</h1></td>
+</tr><tr>
+  <td align="center"><strong>Operator Console for the Ferro Labs AI Gateway</strong></td>
+</tr></table>
 
-![ferro-cli console demo](docs/console.gif)
+**A scriptable CLI and interactive TUI for the [Ferro Labs AI Gateway](https://github.com/ferro-labs/ai-gateway). One static binary — health, request logs, API keys, and a live playground, without opening a browser.**
+
+[![Go](https://img.shields.io/badge/go-1.25+-00ADD8.svg)](https://go.dev)
+[![Go Reference](https://pkg.go.dev/badge/github.com/ferro-labs/gateway-cli.svg)](https://pkg.go.dev/github.com/ferro-labs/gateway-cli)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![CI](https://github.com/ferro-labs/gateway-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/ferro-labs/gateway-cli/actions/workflows/ci.yml)
+
+📖 **Gateway documentation:** [docs.ferrolabs.ai](https://docs.ferrolabs.ai) · this README is the reference for `ferro` itself
+
+<img src="docs/console.gif" alt="ferro-cli console demo" width="100%" />
+
+</div>
+
+---
 
 `ferro-cli` ships a single binary named **`ferro`**. Run it with a verb and it
 behaves like any other Unix tool — `ferro status`, `ferro keys list`,
@@ -14,8 +29,6 @@ terminal and it opens the console above.
 
 Every console view has a scriptable twin. The console is a lens, never the only
 door.
-
----
 
 ## Install
 
