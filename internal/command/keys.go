@@ -1,8 +1,11 @@
 package command
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -153,12 +156,18 @@ func keyCreateRequest(name, scope string, expiresIn time.Duration) (api.KeyCreat
 }
 
 func newKeysRotateCmd() *cobra.Command {
-	return &cobra.Command{
+	// Rotation is as destructive as revocation from the outside: every client
+	// still holding the current secret stops authenticating the moment it
+	// lands, and no flag brings the old one back.
+	rotate := &cobra.Command{
 		Use:   "rotate <id>",
 		Short: "Rotate a key (the previous secret dies immediately)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			d := deps(cmd)
+			if err := confirmDestructive(cmd, "rotate", args[0]); err != nil {
+				return err
+			}
 			k, err := d.Client.RotateKey(cmd.Context(), args[0])
 			if err != nil {
 				return err
@@ -167,6 +176,8 @@ func newKeysRotateCmd() *cobra.Command {
 				"previous secret stopped authenticating; the new one is shown once")
 		},
 	}
+	addYesFlag(rotate)
+	return rotate
 }
 
 // printSecretOnce is the one deliberate credential display: the secret goes to
@@ -182,12 +193,15 @@ func printSecretOnce(d *runtimeDeps, k *api.Key, warning string) error {
 }
 
 func newKeysRevokeCmd() *cobra.Command {
-	return &cobra.Command{
+	revoke := &cobra.Command{
 		Use:   "revoke <id>",
 		Short: "Revoke a key (immediate and irreversible)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			d := deps(cmd)
+			if err := confirmDestructive(cmd, "revoke", args[0]); err != nil {
+				return err
+			}
 			if err := d.Client.RevokeKey(cmd.Context(), args[0]); err != nil {
 				return err
 			}
@@ -195,4 +209,46 @@ func newKeysRevokeCmd() *cobra.Command {
 			return nil
 		},
 	}
+	addYesFlag(revoke)
+	return revoke
+}
+
+// flagYes is the one spelling of "I have read the blast radius", shared by both
+// destructive key verbs so a script that learnt it on one keeps it on the other.
+const flagYes = "yes"
+
+func addYesFlag(cmd *cobra.Command) {
+	cmd.Flags().Bool(flagYes, false, "skip the confirmation prompt (required when there is no terminal)")
+}
+
+// confirmDestructive gates rotate and revoke on the operator typing the key id
+// back. Typing the id rather than "y" is the console's discipline -- its modal
+// demands the key's exact name before it will revoke (internal/tui's
+// openRevoke) -- and the id is what the CLI has on the command line, so it is
+// the thing that can actually be checked against a typo in the argument.
+//
+// The prompt goes to stderr and the answer comes from cmd's stdin: stdout stays
+// the payload channel even here, where there is no payload.
+func confirmDestructive(cmd *cobra.Command, verb, id string) error {
+	if yes, _ := cmd.Flags().GetBool(flagYes); yes {
+		return nil
+	}
+	// A pipe, a CI job, or a cron line has nobody to answer. Blocking on a read
+	// that will never return is the worst of the three possible behaviours, and
+	// proceeding unasked is the second worst.
+	if !stdinIsTTY() || !isTTY(os.Stderr) {
+		return fmt.Errorf(
+			"%s %s is irreversible and there is no terminal to confirm on: pass --yes to run it non-interactively",
+			verb, id)
+	}
+	deps(cmd).Printer.Warn("%s %s is irreversible — type the key id to confirm:", verb, id)
+	answer, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+	// EOF (a closed terminal) is a valid end to the answer, not a read failure.
+	if err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("read confirmation: %w", err)
+	}
+	if strings.TrimSpace(answer) != id {
+		return fmt.Errorf("aborted: the id typed did not match %q, so nothing was %sd", id, verb)
+	}
+	return nil
 }
