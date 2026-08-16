@@ -21,7 +21,9 @@ func gateway(t *testing.T, s fixture.State) *httptest.Server {
 	return srv
 }
 
-// run executes a verb against srv with the fixture's credential.
+// run executes a verb against srv with the fixture's credential. Config
+// isolation is execute's (root_test.go) and reaches every test through here --
+// a test that builds its own root instead has to repeat it, as chat_test.go does.
 func run(t *testing.T, srv *httptest.Server, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
 	t.Setenv("FERRO_API_KEY", "fgw_test")

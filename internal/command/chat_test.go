@@ -73,6 +73,11 @@ func recordingGateway(t *testing.T, s fixture.State) (*httptest.Server, *recorde
 // the context that an interrupt cancels.
 func runChatWith(ctx context.Context, t *testing.T, srv *httptest.Server, stdin io.Reader, stdout io.Writer, args ...string) (stderr string, err error) {
 	t.Helper()
+	// This builds its own root instead of going through execute(), so it does not
+	// inherit execute's config isolation -- see root_test.go. Without this line a
+	// developer's real ~/.config/ferro/config.yaml resolves into PersistentPreRunE
+	// and steers every test below it.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FERRO_API_KEY", "fgw_test")
 	root := NewRoot()
 	var errb bytes.Buffer
