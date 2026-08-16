@@ -35,6 +35,34 @@ type serviceSummary struct {
 	State string `json:"state"`
 }
 
+// serviceProbe is one row's name and the reading behind it. read is a closure
+// rather than a value because the four services answer with four different
+// types and only the sentence they reduce to is shared -- and because the
+// reading must not be evaluated before its error is checked: audit's row reads
+// through a pointer the gateway leaves nil when it refuses the call.
+type serviceProbe struct {
+	name string
+	read func() (string, error)
+}
+
+// summarize applies the rule every service row obeys: a gateway that does not
+// serve the endpoint at all answers 501, which reports the feature absent
+// rather than present-and-empty, and is not a failure. Anything else is.
+//
+// It exists so that rule is written once. Four copies of it meant a change to
+// what counts as "absent" -- tolerating a 404 as well, say -- was four edits
+// with nothing to catch the one that got missed.
+func (p serviceProbe) summarize() (serviceSummary, error) {
+	state, err := p.read()
+	switch {
+	case api.IsNotSupported(err):
+		return serviceSummary{Name: p.name, State: stateUnsupported}, nil
+	case err != nil:
+		return serviceSummary{}, err
+	}
+	return serviceSummary{Name: p.name, State: state}, nil
+}
+
 func newServicesCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "services",
@@ -42,61 +70,56 @@ func newServicesCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			d := deps(cmd)
-			rows := make([]serviceSummary, 0, 4)
-
-			servers, err := mcpServers(cmd)
-			switch {
-			case api.IsNotSupported(err):
-				rows = append(rows, serviceSummary{Name: svcMCP, State: stateUnsupported})
-			case err != nil:
-				return err
-			default:
-				ready := 0
-				for _, s := range servers {
-					if s.Ready {
-						ready++
+			probes := []serviceProbe{
+				{svcMCP, func() (string, error) {
+					servers, err := mcpServers(cmd)
+					if err != nil {
+						return "", err
 					}
-				}
-				rows = append(rows, serviceSummary{
-					Name:  svcMCP,
-					State: fmt.Sprintf("%d/%d ready", ready, len(servers)),
-				})
-			}
-
-			plugins, err := d.Client.Plugins(cmd.Context())
-			switch {
-			case api.IsNotSupported(err):
-				rows = append(rows, serviceSummary{Name: svcPlugins, State: stateUnsupported})
-			case err != nil:
-				return err
-			default:
-				active := 0
-				for _, p := range plugins {
-					if p.Enabled {
-						active++
+					ready := 0
+					for _, s := range servers {
+						if s.Ready {
+							ready++
+						}
 					}
+					return fmt.Sprintf("%d/%d ready", ready, len(servers)), nil
+				}},
+				{svcPlugins, func() (string, error) {
+					plugins, err := d.Client.Plugins(cmd.Context())
+					if err != nil {
+						return "", err
+					}
+					active := 0
+					for _, p := range plugins {
+						if p.Enabled {
+							active++
+						}
+					}
+					return fmt.Sprintf("%d active", active), nil
+				}},
+				{svcSessions, func() (string, error) {
+					sessions, err := d.Client.Sessions(cmd.Context())
+					if err != nil {
+						return "", err
+					}
+					return fmt.Sprintf("%d operators", len(sessions)), nil
+				}},
+				{svcAudit, func() (string, error) {
+					audit, err := d.Client.Audit(cmd.Context(), api.AuditQuery{Limit: 1})
+					if err != nil {
+						return "", err
+					}
+					return fmt.Sprintf("%d events", audit.Summary.TotalEntries), nil
+				}},
+			}
+
+			rows := make([]serviceSummary, 0, len(probes))
+			for _, p := range probes {
+				row, err := p.summarize()
+				if err != nil {
+					return err
 				}
-				rows = append(rows, serviceSummary{Name: svcPlugins, State: fmt.Sprintf("%d active", active)})
-			}
-
-			sessions, err := d.Client.Sessions(cmd.Context())
-			switch {
-			case api.IsNotSupported(err):
-				rows = append(rows, serviceSummary{Name: svcSessions, State: stateUnsupported})
-			case err != nil:
-				return err
-			default:
-				rows = append(rows, serviceSummary{Name: svcSessions, State: fmt.Sprintf("%d operators", len(sessions))})
-			}
-
-			audit, err := d.Client.Audit(cmd.Context(), api.AuditQuery{Limit: 1})
-			switch {
-			case api.IsNotSupported(err):
-				rows = append(rows, serviceSummary{Name: svcAudit, State: stateUnsupported})
-			case err != nil:
-				return err
-			default:
-				rows = append(rows, serviceSummary{Name: svcAudit, State: fmt.Sprintf("%d events", audit.Summary.TotalEntries)})
+				rows = append(rows, row)
 			}
 
 			if d.Printer.Format != FormatTable {

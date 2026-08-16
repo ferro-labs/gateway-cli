@@ -19,13 +19,22 @@ type reply struct {
 	body   []byte
 }
 
-// do runs one request against a fresh server wrapping h. Every test goes
-// through it, so the request context, the body read and the close are done in
-// one place rather than re-hand-rolled per test.
-func do(t *testing.T, h http.Handler, method, path, bearer, body string) reply {
+// serve starts one server for state's handler. It is the unit a test shares:
+// the fixture's key store lives in the handler, so a create followed by a read
+// is one flow against one gateway, and opening a listener per request modelled
+// it as four unrelated ones.
+func serve(t *testing.T, state State) *httptest.Server {
 	t.Helper()
-	srv := httptest.NewServer(h)
+	srv := httptest.NewServer(Handler(state))
 	t.Cleanup(srv.Close)
+	return srv
+}
+
+// do runs one request against srv. Every test goes through it, so the request
+// context, the body read and the close are done in one place rather than
+// re-hand-rolled per test.
+func do(t *testing.T, srv *httptest.Server, method, path, bearer, body string) reply {
+	t.Helper()
 	var payload io.Reader
 	if body != "" {
 		payload = strings.NewReader(body)
@@ -54,13 +63,13 @@ func do(t *testing.T, h http.Handler, method, path, bearer, body string) reply {
 }
 
 // get is do for the read surface, which is most of it.
-func get(t *testing.T, h http.Handler, method, path, bearer string) reply {
+func get(t *testing.T, srv *httptest.Server, method, path, bearer string) reply {
 	t.Helper()
-	return do(t, h, method, path, bearer, "")
+	return do(t, srv, method, path, bearer, "")
 }
 
 func TestHealthShapeMatchesContract(t *testing.T) {
-	res := get(t, Handler(Default()), "GET", "/health", "")
+	res := get(t, serve(t, Default()), "GET", "/health", "")
 	if res.status != 200 {
 		t.Fatalf("healthy /health must be 200, got %d", res.status)
 	}
@@ -85,7 +94,7 @@ func TestHealthShapeMatchesContract(t *testing.T) {
 // a half-open circuit with live providers still answers 200 "ok"; only an
 // empty provider set makes /health non-200.
 func TestDegradedIsA200WithAHalfOpenCircuit(t *testing.T) {
-	res := get(t, Handler(State{Degraded: true}), "GET", "/health", "")
+	res := get(t, serve(t, State{Degraded: true}), "GET", "/health", "")
 	if res.status != 200 {
 		t.Fatalf("a circuit does not make /health non-200, got %d", res.status)
 	}
@@ -96,7 +105,7 @@ func TestDegradedIsA200WithAHalfOpenCircuit(t *testing.T) {
 }
 
 func TestNoProvidersIs503WithAnEmptyProviderSet(t *testing.T) {
-	res := get(t, Handler(State{NoProviders: true}), "GET", "/health", "")
+	res := get(t, serve(t, State{NoProviders: true}), "GET", "/health", "")
 	if res.status != 503 {
 		t.Fatalf("an empty provider set is the one 503 /health has, got %d", res.status)
 	}
@@ -110,7 +119,7 @@ func TestNoProvidersIs503WithAnEmptyProviderSet(t *testing.T) {
 // taught ferro status to read target counts that are not there, and report
 // "0/0 targets" for a gateway whose targets were merely dead.
 func TestNotReadyCarriesOnlyStatusAndReason(t *testing.T) {
-	res := get(t, Handler(State{NoProviders: true}), "GET", "/readyz", "")
+	res := get(t, serve(t, State{NoProviders: true}), "GET", "/readyz", "")
 	if res.status != 503 {
 		t.Fatalf("want 503, got %d", res.status)
 	}
@@ -135,26 +144,26 @@ func TestNotReadyCarriesOnlyStatusAndReason(t *testing.T) {
 }
 
 func TestAdminRoutesRequireBearer(t *testing.T) {
-	h := Handler(Default())
-	res := get(t, h, "GET", "/admin/keys", "")
+	srv := serve(t, Default())
+	res := get(t, srv, "GET", "/admin/keys", "")
 	if res.status != 401 || !strings.Contains(string(res.body), "authentication_error") {
 		t.Fatalf("want the documented 401 envelope, got %d %s", res.status, res.body)
 	}
-	if res = get(t, h, "GET", "/admin/keys", "fgw_test"); res.status != 200 {
+	if res = get(t, srv, "GET", "/admin/keys", "fgw_test"); res.status != 200 {
 		t.Fatalf("valid bearer must be accepted, got %d", res.status)
 	}
 }
 
 func TestFeatureAbsenceIs501(t *testing.T) {
-	res := get(t, Handler(State{NoLogStore: true}), "GET", "/admin/logs", "")
+	res := get(t, serve(t, State{NoLogStore: true}), "GET", "/admin/logs", "")
 	if res.status != 501 {
 		t.Fatalf("absent log store must 501 so the CLI can feature-detect, got %d", res.status)
 	}
 }
 
 func TestKeysAreStatefulAcrossRequests(t *testing.T) {
-	h := Handler(Default()) // one handler, two requests: the store must persist
-	res := do(t, h, "POST", "/admin/keys", "fgw_test",
+	srv := serve(t, Default()) // one server, two requests: the store must persist
+	res := do(t, srv, "POST", "/admin/keys", "fgw_test",
 		`{"name":"itest","scopes":["read_only"]}`)
 	if res.status != 201 {
 		t.Fatalf("create must be 201: %d %s", res.status, res.body)
@@ -169,7 +178,7 @@ func TestKeysAreStatefulAcrossRequests(t *testing.T) {
 	if !strings.HasPrefix(created.Key, "fgw_") || len(created.Key) < 20 {
 		t.Fatalf("create must return the full secret once, got %q", created.Key)
 	}
-	list := get(t, h, "GET", "/admin/keys", "fgw_test")
+	list := get(t, srv, "GET", "/admin/keys", "fgw_test")
 	if !strings.Contains(string(list.body), "itest") {
 		t.Fatal("created key must appear in the list — the fake is stateful by design")
 	}
@@ -184,9 +193,9 @@ func TestKeysAreStatefulAcrossRequests(t *testing.T) {
 // could pass CI. This covers the mutating half of the key surface the way
 // TestKeysAreStatefulAcrossRequests covers create/list.
 func TestKeyLifecycleMutatesTheStore(t *testing.T) {
-	h := Handler(Default())
+	srv := serve(t, Default())
 
-	rotated := do(t, h, http.MethodPost, "/admin/keys/key_01/rotate", "fgw_test", "")
+	rotated := do(t, srv, http.MethodPost, "/admin/keys/key_01/rotate", "fgw_test", "")
 	if rotated.status != http.StatusOK {
 		t.Fatalf("rotate must be 200: %d %s", rotated.status, rotated.body)
 	}
@@ -200,17 +209,17 @@ func TestKeyLifecycleMutatesTheStore(t *testing.T) {
 	if !strings.HasPrefix(row.Key, "fgw_") || row.RotatedAt == nil {
 		t.Fatalf("rotate must serve the new secret once and stamp rotated_at: %s", rotated.body)
 	}
-	if listed := get(t, h, http.MethodGet, "/admin/keys/key_01", "fgw_test"); strings.Contains(string(listed.body), row.Key) {
+	if listed := get(t, srv, http.MethodGet, "/admin/keys/key_01", "fgw_test"); strings.Contains(string(listed.body), row.Key) {
 		t.Fatal("a later read must mask the rotated secret")
 	}
 
-	if res := do(t, h, http.MethodPost, "/admin/keys/key_02/revoke", "fgw_test", ""); res.status != http.StatusOK {
+	if res := do(t, srv, http.MethodPost, "/admin/keys/key_02/revoke", "fgw_test", ""); res.status != http.StatusOK {
 		t.Fatalf("revoke must be 200: %d %s", res.status, res.body)
 	}
-	if res := do(t, h, http.MethodDelete, "/admin/keys/key_02", "fgw_test", ""); res.status != http.StatusNoContent {
+	if res := do(t, srv, http.MethodDelete, "/admin/keys/key_02", "fgw_test", ""); res.status != http.StatusNoContent {
 		t.Fatalf("delete must be 204: %d %s", res.status, res.body)
 	}
-	res := get(t, h, http.MethodGet, "/admin/keys/key_02", "fgw_test")
+	res := get(t, srv, http.MethodGet, "/admin/keys/key_02", "fgw_test")
 	if res.status != http.StatusNotFound || !strings.Contains(string(res.body), "not_found_error") {
 		t.Fatalf("a deleted key must 404 in the documented envelope: %d %s", res.status, res.body)
 	}
@@ -220,12 +229,13 @@ func TestKeyLifecycleMutatesTheStore(t *testing.T) {
 // store both its backends share. A fake that stored the empty list instead
 // would hand every fixture-backed test a scopeless key the gateway never mints.
 func TestCreateWithoutScopesDefaultsToReadOnly(t *testing.T) {
+	srv := serve(t, Default())
 	for _, body := range []string{
 		`{"name":"absent"}`,
 		`{"name":"null","scopes":null}`,
 		`{"name":"empty","scopes":[]}`,
 	} {
-		res := do(t, Handler(Default()), "POST", "/admin/keys", "fgw_test", body)
+		res := do(t, srv, "POST", "/admin/keys", "fgw_test", body)
 		if res.status != 201 {
 			t.Fatalf("create must be 201: %d %s", res.status, res.body)
 		}
@@ -245,7 +255,7 @@ func TestCreateWithoutScopesDefaultsToReadOnly(t *testing.T) {
 // order. A seeded row out of order would validate paging against an order the
 // gateway cannot produce.
 func TestSeededLogIsNewestFirst(t *testing.T) {
-	res := get(t, Handler(Default()), "GET", "/admin/logs?stage=all", "fgw_test")
+	res := get(t, serve(t, Default()), "GET", "/admin/logs?stage=all", "fgw_test")
 	var page struct {
 		Data []struct {
 			Stage     string `json:"stage"`
@@ -273,7 +283,7 @@ func TestSeededLogIsNewestFirst(t *testing.T) {
 }
 
 func TestChatStreamFraming(t *testing.T) {
-	res := do(t, Handler(Default()), "POST", "/v1/chat/completions", "fgw_test",
+	res := do(t, serve(t, Default()), "POST", "/v1/chat/completions", "fgw_test",
 		`{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"stream":true}`)
 	if ct := res.header.Get("Content-Type"); !strings.HasPrefix(ct, "text/event-stream") {
 		t.Fatalf("want SSE content type, got %q", ct)
@@ -295,7 +305,7 @@ func TestChatErrorFrameHasNoDone(t *testing.T) {
 	// The WHOLE stream is read, not its first frame: "there is no [DONE]" is a
 	// claim about the end of the stream, and a partial read can only fail to
 	// find one that was in fact sent.
-	res := do(t, Handler(State{ChatFails: true}), "POST", "/v1/chat/completions", "",
+	res := do(t, serve(t, State{ChatFails: true}), "POST", "/v1/chat/completions", "",
 		`{"model":"m","messages":[],"stream":true}`)
 	got := string(res.body)
 	if !strings.Contains(got, "stream_error") || strings.Contains(got, "[DONE]") {
@@ -307,7 +317,7 @@ func TestChatErrorFrameHasNoDone(t *testing.T) {
 // fake did not, the CLI's model discovery and playground could be built without
 // sending a credential and would 401 on first contact with a real gateway.
 func TestV1RoutesRequireBearerToo(t *testing.T) {
-	h := Handler(Default())
+	srv := serve(t, Default())
 	// Each route is probed with the METHOD the CLI reaches it by. A handler
 	// that authenticated GET /v1/chat/completions but not the POST the
 	// playground sends would pass a GET-only loop and 401 in production.
@@ -315,7 +325,7 @@ func TestV1RoutesRequireBearerToo(t *testing.T) {
 		{http.MethodGet, "/v1/models", ""},
 		{http.MethodPost, "/v1/chat/completions", `{"model":"m","messages":[],"stream":true}`},
 	} {
-		res := do(t, h, tc.method, tc.path, "", tc.body)
+		res := do(t, srv, tc.method, tc.path, "", tc.body)
 		if res.status != 401 {
 			t.Fatalf("%s %s without a bearer must be 401, got %d", tc.method, tc.path, res.status)
 		}
@@ -323,34 +333,34 @@ func TestV1RoutesRequireBearerToo(t *testing.T) {
 			t.Fatalf("%s %s must use the documented error envelope: %s", tc.method, tc.path, res.body)
 		}
 	}
-	if res := get(t, h, "GET", "/v1/models", "fgw_test"); res.status != 200 {
+	if res := get(t, srv, "GET", "/v1/models", "fgw_test"); res.status != 200 {
 		t.Fatalf("valid bearer must be accepted on /v1/models, got %d", res.status)
 	}
 }
 
 // ...while the liveness surface stays open, as it is on the real router.
 func TestHealthSurfaceStaysUnauthenticated(t *testing.T) {
-	h := Handler(Default())
+	srv := serve(t, Default())
 	for _, path := range []string{"/health", "/readyz"} {
-		if res := get(t, h, "GET", path, ""); res.status == 401 {
+		if res := get(t, srv, "GET", path, ""); res.status == 401 {
 			t.Fatalf("%s must not require a credential", path)
 		}
 	}
-	res := get(t, h, "GET", "/livez", "")
+	res := get(t, srv, "GET", "/livez", "")
 	if res.status != http.StatusOK || strings.TrimSpace(string(res.body)) != `{"status":"ok"}` {
 		t.Fatalf("/livez must be an open 200 status payload, got %d %s", res.status, res.body)
 	}
 }
 
 func TestChatRequiresStreaming(t *testing.T) {
-	h := Handler(Default())
+	srv := serve(t, Default())
 	for _, body := range []string{
 		`{"model":"m"}`,
 		`{"model":"m","stream":false}`,
 		`{"model":"m","stream":true}{"stream":true}`,
 		`{"stream":false,"stream":true}`,
 	} {
-		res := do(t, h, http.MethodPost, "/v1/chat/completions", "fgw_test", body)
+		res := do(t, srv, http.MethodPost, "/v1/chat/completions", "fgw_test", body)
 		if res.status != http.StatusBadRequest {
 			t.Fatalf("non-streaming request must be rejected, got %d", res.status)
 		}
@@ -358,8 +368,8 @@ func TestChatRequiresStreaming(t *testing.T) {
 }
 
 func TestAuditFiltersAndPagesRows(t *testing.T) {
-	h := Handler(Default())
-	res := get(t, h, "GET", "/admin/audit?outcome=ok&limit=1&offset=1", "fgw_test")
+	srv := serve(t, Default())
+	res := get(t, srv, "GET", "/admin/audit?outcome=ok&limit=1&offset=1", "fgw_test")
 	if res.status != http.StatusOK {
 		t.Fatalf("audit query failed: %d %s", res.status, res.body)
 	}
@@ -379,7 +389,7 @@ func TestAuditFiltersAndPagesRows(t *testing.T) {
 }
 
 func TestAuditRejectsInvalidSince(t *testing.T) {
-	res := get(t, Handler(Default()), "GET", "/admin/audit?since=not-a-time", "fgw_test")
+	res := get(t, serve(t, Default()), "GET", "/admin/audit?since=not-a-time", "fgw_test")
 	if res.status != http.StatusBadRequest ||
 		!strings.Contains(string(res.body), `"type":"invalid_request_error"`) {
 		t.Fatalf("invalid since must use the invalid-request envelope: %d %s", res.status, res.body)
@@ -391,6 +401,7 @@ func TestAuditRejectsInvalidSince(t *testing.T) {
 // silently fell back to its default and served an empty page instead. Both
 // endpoints share the page[T] helper, so one table covers both.
 func TestNonPositiveLimitIs400OnLogsAndAudit(t *testing.T) {
+	srv := serve(t, Default())
 	for _, path := range []string{
 		"/admin/logs?limit=0",
 		"/admin/logs?limit=-1",
@@ -399,7 +410,7 @@ func TestNonPositiveLimitIs400OnLogsAndAudit(t *testing.T) {
 		"/admin/audit?limit=-1",
 		"/admin/audit?limit=abc",
 	} {
-		res := get(t, Handler(Default()), "GET", path, "fgw_test")
+		res := get(t, srv, "GET", path, "fgw_test")
 		if res.status != http.StatusBadRequest ||
 			!strings.Contains(string(res.body), `"type":"invalid_request_error"`) {
 			t.Fatalf("%s: want the documented 400 envelope for a non-positive limit, got %d %s", path, res.status, res.body)
@@ -409,13 +420,14 @@ func TestNonPositiveLimitIs400OnLogsAndAudit(t *testing.T) {
 
 // parseOffset rejects the same two shapes parseLimit does, one bound over.
 func TestNegativeOffsetIs400OnLogsAndAudit(t *testing.T) {
+	srv := serve(t, Default())
 	for _, path := range []string{
 		"/admin/logs?offset=-1",
 		"/admin/logs?offset=abc",
 		"/admin/audit?offset=-1",
 		"/admin/audit?offset=abc",
 	} {
-		res := get(t, Handler(Default()), "GET", path, "fgw_test")
+		res := get(t, srv, "GET", path, "fgw_test")
 		if res.status != http.StatusBadRequest ||
 			!strings.Contains(string(res.body), `"type":"invalid_request_error"`) {
 			t.Fatalf("%s: want the documented 400 envelope for a bad offset, got %d %s", path, res.status, res.body)
@@ -428,6 +440,7 @@ func TestNegativeOffsetIs400OnLogsAndAudit(t *testing.T) {
 // so `?limit=` is the same request as no limit at all. A fixture that rejected
 // it would send someone hunting a CLI bug that does not exist.
 func TestEmptyBoundIsReadAsAbsentNotRejected(t *testing.T) {
+	srv := serve(t, Default())
 	for _, path := range []string{
 		"/admin/logs?limit=",
 		"/admin/logs?offset=",
@@ -435,7 +448,7 @@ func TestEmptyBoundIsReadAsAbsentNotRejected(t *testing.T) {
 		"/admin/audit?limit=",
 		"/admin/audit?offset=",
 	} {
-		res := get(t, Handler(Default()), "GET", path, "fgw_test")
+		res := get(t, srv, "GET", path, "fgw_test")
 		if res.status != http.StatusOK {
 			t.Fatalf("%s: an empty bound means absent, want 200, got %d %s", path, res.status, res.body)
 		}
@@ -447,11 +460,12 @@ func TestEmptyBoundIsReadAsAbsentNotRejected(t *testing.T) {
 // shared by all three) — this fixture used to accept anything on
 // /admin/logs/stats because it never looked at the query at all.
 func TestMalformedSinceIs400OnLogsAndStats(t *testing.T) {
+	srv := serve(t, Default())
 	for _, path := range []string{
 		"/admin/logs?since=not-a-time",
 		"/admin/logs/stats?since=not-a-time",
 	} {
-		res := get(t, Handler(Default()), "GET", path, "fgw_test")
+		res := get(t, srv, "GET", path, "fgw_test")
 		if res.status != http.StatusBadRequest ||
 			!strings.Contains(string(res.body), `"type":"invalid_request_error"`) {
 			t.Fatalf("%s: want the documented 400 envelope for a malformed since, got %d %s", path, res.status, res.body)
@@ -466,9 +480,9 @@ type statsSummary struct {
 	ByProvider map[string]json.RawMessage `json:"by_provider"`
 }
 
-func decodeStats(t *testing.T, path string) statsSummary {
+func decodeStats(t *testing.T, srv *httptest.Server, path string) statsSummary {
 	t.Helper()
-	res := get(t, Handler(Default()), "GET", path, "fgw_test")
+	res := get(t, srv, "GET", path, "fgw_test")
 	if res.status != http.StatusOK {
 		t.Fatalf("%s: want 200, got %d %s", path, res.status, res.body)
 	}
@@ -485,7 +499,8 @@ func decodeStats(t *testing.T, path string) statsSummary {
 // narrows a five-row seed a different way, and the unfiltered count (5) proves
 // the baseline itself is real data, not a coincidence of one filter.
 func TestStatsFiltersNarrowTheAggregate(t *testing.T) {
-	base := decodeStats(t, "/admin/logs/stats")
+	srv := serve(t, Default())
+	base := decodeStats(t, srv, "/admin/logs/stats")
 	if base.Summary.TotalEntries != 5 {
 		t.Fatalf("unfiltered stats: want all 5 seeded rows, got %d", base.Summary.TotalEntries)
 	}
@@ -504,7 +519,7 @@ func TestStatsFiltersNarrowTheAggregate(t *testing.T) {
 		{"/admin/logs/stats?stage=before_request", 1},
 		{"/admin/logs/stats?model=does-not-exist", 0},
 	} {
-		got := decodeStats(t, tc.path)
+		got := decodeStats(t, srv, tc.path)
 		if got.Summary.TotalEntries != tc.want {
 			t.Fatalf("%s: want %d entries, got %d (a fixture that dropped this filter would still report %d)",
 				tc.path, tc.want, got.Summary.TotalEntries, base.Summary.TotalEntries)
@@ -513,7 +528,7 @@ func TestStatsFiltersNarrowTheAggregate(t *testing.T) {
 
 	// provider=openai must also drop anthropic out of the by_provider
 	// breakdown, not just shrink the total.
-	openaiOnly := decodeStats(t, "/admin/logs/stats?provider=openai")
+	openaiOnly := decodeStats(t, srv, "/admin/logs/stats?provider=openai")
 	if _, ok := openaiOnly.ByProvider["anthropic"]; ok {
 		t.Fatalf("provider=openai must drop anthropic from by_provider: %+v", openaiOnly.ByProvider)
 	}
@@ -524,13 +539,14 @@ func TestStatsFiltersNarrowTheAggregate(t *testing.T) {
 // not 400, and — because /admin/logs/stats used to ignore every parameter —
 // it must not silently narrow the aggregate either.
 func TestStatsEmptyFilterValueIsAbsentNotRejected(t *testing.T) {
+	srv := serve(t, Default())
 	for _, path := range []string{
 		"/admin/logs/stats?model=",
 		"/admin/logs/stats?provider=",
 		"/admin/logs/stats?stage=",
 		"/admin/logs/stats?since=",
 	} {
-		got := decodeStats(t, path)
+		got := decodeStats(t, srv, path)
 		if got.Summary.TotalEntries != 5 {
 			t.Fatalf("%s: an empty value means absent, want all 5 seeded rows, got %d", path, got.Summary.TotalEntries)
 		}
@@ -541,8 +557,9 @@ func TestStatsEmptyFilterValueIsAbsentNotRejected(t *testing.T) {
 // SQLWriter.Stats: "created_at >= ?"), so a cursor five minutes back must drop
 // exactly the row seeded nine minutes back and keep the other four.
 func TestStatsSinceKeepsOnlyRowsAtOrAfterTheCursor(t *testing.T) {
+	srv := serve(t, Default())
 	since := time.Now().Add(-5 * time.Minute).UTC().Format(time.RFC3339)
-	got := decodeStats(t, "/admin/logs/stats?since="+since)
+	got := decodeStats(t, srv, "/admin/logs/stats?since="+since)
 	if got.Summary.TotalEntries != 4 {
 		t.Fatalf("since=-5m must drop the row seeded 9 minutes ago, want 4 entries, got %d", got.Summary.TotalEntries)
 	}
@@ -552,8 +569,8 @@ func TestStatsSinceKeepsOnlyRowsAtOrAfterTheCursor(t *testing.T) {
 // the fixture must too — a fake that accepts "readonly" lets a CLI that sends
 // the wrong spelling pass every test here and fail against a real gateway.
 func TestCreateRejectsAnUnknownScope(t *testing.T) {
-	h := Handler(Default())
-	res := do(t, h, http.MethodPost, "/admin/keys", "fgw_test",
+	srv := serve(t, Default())
+	res := do(t, srv, http.MethodPost, "/admin/keys", "fgw_test",
 		`{"name":"typo","scopes":["readonly"]}`)
 	if res.status != http.StatusBadRequest {
 		t.Fatalf("an unknown scope must be 400, got %d %s", res.status, res.body)
@@ -564,7 +581,7 @@ func TestCreateRejectsAnUnknownScope(t *testing.T) {
 		}
 	}
 	// The refusal must not have created anything.
-	if list := get(t, h, http.MethodGet, "/admin/keys", "fgw_test"); strings.Contains(string(list.body), "typo") {
+	if list := get(t, srv, http.MethodGet, "/admin/keys", "fgw_test"); strings.Contains(string(list.body), "typo") {
 		t.Fatalf("a refused create must not reach the store: %s", list.body)
 	}
 }
@@ -572,9 +589,9 @@ func TestCreateRejectsAnUnknownScope(t *testing.T) {
 // Both members of the closed set are accepted, so the guard above cannot pass
 // by rejecting everything.
 func TestCreateAcceptsBothValidScopes(t *testing.T) {
-	h := Handler(Default())
+	srv := serve(t, Default())
 	for _, scope := range []string{scopeAdmin, scopeReadOnly} {
-		res := do(t, h, http.MethodPost, "/admin/keys", "fgw_test",
+		res := do(t, srv, http.MethodPost, "/admin/keys", "fgw_test",
 			`{"name":"ok-`+scope+`","scopes":["`+scope+`"]}`)
 		if res.status != http.StatusCreated {
 			t.Fatalf("%s must be accepted, got %d %s", scope, res.status, res.body)
@@ -586,7 +603,7 @@ func TestCreateAcceptsBothValidScopes(t *testing.T) {
 // revoked_at:null, expires_at in the past. Seeding active:false here was
 // fixture-only fiction that hid a real CLI bug.
 func TestExpiredKeyKeepsActiveTrueOnTheWire(t *testing.T) {
-	res := get(t, Handler(Default()), http.MethodGet, "/admin/keys", "fgw_test")
+	res := get(t, serve(t, Default()), http.MethodGet, "/admin/keys", "fgw_test")
 	var rows []struct {
 		Name      string  `json:"name"`
 		RevokedAt *string `json:"revoked_at"`
