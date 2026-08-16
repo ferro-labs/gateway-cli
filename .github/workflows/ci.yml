@@ -10,7 +10,17 @@ on:
     - cron: "0 4 * * 1"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Literal "ci-", never ${{ github.workflow }}: inside a reusable workflow that
+  # expression resolves to the *caller's* name, so the `uses: ./.github/workflows/ci.yml`
+  # leg of release.yml would compute "Release-refs/tags/vX" while release.yml's own
+  # group is "release-refs/tags/vX" -- the same group, because GitHub matches
+  # concurrency names case-insensitively, but with the two halves disagreeing about
+  # cancel-in-progress (true here, false there). A literal keeps this group's meaning
+  # fixed no matter who calls the workflow. Do not "restore" the expression.
+  group: ci-${{ github.ref }}
+  # Pull requests and pushes to main only care about the newest commit; superseded
+  # runs are wasted minutes. Tagged releases are serialised by release.yml's own
+  # group instead, which is where cancel-in-progress: false belongs.
   cancel-in-progress: true
 
 permissions:

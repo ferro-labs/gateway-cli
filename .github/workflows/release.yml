@@ -34,6 +34,10 @@ jobs:
           # A restored cache can carry entries from other refs; this job
           # publishes release artifacts, so a poisoned cache is user-facing.
           cache: false
+      # .goreleaser.yaml's sboms block shells out to syft, which is not present on
+      # GitHub-hosted runners; without this step the first real tag fails at the
+      # SBOM stage, after the binaries are already built.
+      - uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
       - uses: goreleaser/goreleaser-action@ec59f474b9834571250b370d4735c50f8e2d1e29 # v7.0.0
         with:
           distribution: goreleaser
