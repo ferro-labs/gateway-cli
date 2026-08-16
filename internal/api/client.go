@@ -257,19 +257,26 @@ func (c *Client) do(ctx context.Context, method, p string, q url.Values, in, out
 // trace flows into terminal output and logs unbounded.
 const maxErrMessage = 2048
 
-func decodeAPIError(status int, raw []byte) *Error {
-	msg := strings.TrimSpace(string(raw))
-	if len(msg) > maxErrMessage {
-		// Back up to a rune boundary before slicing: a cut through the middle
-		// of a multi-byte rune renders as U+FFFD, which reads as corruption in
-		// the gateway's reply rather than as ferro's own truncation.
-		cut := maxErrMessage
-		for cut > 0 && !utf8.RuneStart(msg[cut]) {
-			cut--
-		}
-		msg = msg[:cut] + "… (truncated)"
+// boundMessage caps an operator-facing message at maxErrMessage. Both of
+// decodeAPIError's sources go through it: capping only the raw body left the
+// bound trivially bypassable, because a gateway answering with a well-formed
+// envelope replaces that message with an unbounded one.
+func boundMessage(s string) string {
+	if len(s) <= maxErrMessage {
+		return s
 	}
-	e := &Error{Status: status, Message: msg}
+	// Back up to a rune boundary before slicing: a cut through the middle of a
+	// multi-byte rune renders as U+FFFD, which reads as corruption in the
+	// gateway's reply rather than as ferro's own truncation.
+	cut := maxErrMessage
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "… (truncated)"
+}
+
+func decodeAPIError(status int, raw []byte) *Error {
+	e := &Error{Status: status, Message: boundMessage(strings.TrimSpace(string(raw)))}
 	var env struct {
 		Error struct {
 			Message string `json:"message"`
@@ -278,7 +285,7 @@ func decodeAPIError(status int, raw []byte) *Error {
 		} `json:"error"`
 	}
 	if json.Unmarshal(raw, &env) == nil && env.Error.Message != "" {
-		e.Message, e.Type, e.Code = env.Error.Message, env.Error.Type, env.Error.Code
+		e.Message, e.Type, e.Code = boundMessage(env.Error.Message), env.Error.Type, env.Error.Code
 	}
 	if e.Message == "" {
 		e.Message = http.StatusText(status)

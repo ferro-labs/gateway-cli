@@ -219,3 +219,31 @@ func TestDecodeAPIErrorTruncatesOnARuneBoundary(t *testing.T) {
 		t.Fatal("truncation split a rune")
 	}
 }
+
+// The envelope path replaces the message the raw-body cap just bounded, so it
+// needs the same cap. Without one, a gateway answering with a well-formed
+// {"error":{"message":...}} sends unbounded text into terminal output and logs
+// while the constant that exists to prevent that reads as enforced.
+func TestDecodeAPIErrorBoundsTheEnvelopeMessageToo(t *testing.T) {
+	body := `{"error":{"message":"` + strings.Repeat("z", maxErrMessage*4) + `","code":"upstream"}}`
+	e := decodeAPIError(http.StatusBadGateway, []byte(body))
+
+	if e.Code != "upstream" {
+		t.Fatalf("envelope must still be decoded, got code %q", e.Code)
+	}
+	if len(e.Message) > maxErrMessage+len("… (truncated)") {
+		t.Errorf("envelope message escaped the %d-byte bound: got %d bytes", maxErrMessage, len(e.Message))
+	}
+	if !strings.HasSuffix(e.Message, "… (truncated)") {
+		t.Error("an oversized envelope message must be marked truncated")
+	}
+}
+
+// A short envelope message is not truncated, so the bound cannot be read as
+// "every structured error loses its tail".
+func TestDecodeAPIErrorLeavesAShortEnvelopeMessageWhole(t *testing.T) {
+	e := decodeAPIError(http.StatusNotFound, []byte(`{"error":{"message":"no such model"}}`))
+	if e.Message != "no such model" {
+		t.Fatalf("got %q", e.Message)
+	}
+}

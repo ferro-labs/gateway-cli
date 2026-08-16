@@ -599,3 +599,39 @@ func TestTraceAttributionNoLogStoreIsNotAnError(t *testing.T) {
 		t.Fatalf("a 501 log store must degrade to (nil, nil), got %+v, %v", row, err)
 	}
 }
+
+// A peer that accepts the connection and then withholds response headers must
+// not hold StreamChat open indefinitely. Do runs before the idle timer exists
+// and the stream client carries no Timeout, so the transport's header bound is
+// the only thing standing between a silent peer and a CLI that never returns —
+// the caller's context has no deadline in either the CLI or the console.
+func TestStreamChatBoundsAPeerThatWithholdsHeaders(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		<-release // never sends headers until the test is done with it
+	}))
+	t.Cleanup(func() { close(release); srv.Close() })
+
+	const idle = 150 * time.Millisecond
+	c, err := New(srv.URL, "", WithStreamIdleTimeout(idle))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		// context.Background(): exactly what the console passes, and what the
+		// CLI's signal context amounts to when nobody presses ctrl+c.
+		_, streamErr := c.StreamChat(context.Background(), ChatRequest{Model: "m"})
+		done <- streamErr
+	}()
+
+	select {
+	case streamErr := <-done:
+		if streamErr == nil {
+			t.Fatal("a peer that sent no headers must not yield a usable stream")
+		}
+	case <-time.After(10 * idle):
+		t.Fatalf("StreamChat did not return within %s of a %s idle bound: the header phase is unbounded", 10*idle, idle)
+	}
+}

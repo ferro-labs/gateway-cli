@@ -171,16 +171,23 @@ func (c *Client) StreamChat(ctx context.Context, req ChatRequest) (*ChatStream, 
 	// ResponseHeaderTimeout, so escaping only the first still cut every stream
 	// off at the header phase. A gateway or ingress that withholds response
 	// headers until the first token is ordinary, which is what
-	// DefaultStreamIdleTimeout is sized for; here the lifetime is ctx's and the
-	// idle timer's alone. The assertion falls back to the transport as-is
-	// because a test double is not an *http.Transport and carries no bound to
-	// clear. The redirect refusal is not optional — a bearer token must not
+	// DefaultStreamIdleTimeout is sized for. The assertion falls back to the
+	// transport as-is because a test double is not an *http.Transport and
+	// carries no bound to set. The redirect refusal is not optional — a bearer token must not
 	// replay to whatever host a redirect names, on this surface as much as any
 	// other.
 	streamTransport := c.hc.Transport
 	if tr, ok := streamTransport.(*http.Transport); ok {
 		clone := tr.Clone()
-		clone.ResponseHeaderTimeout = 0
+		// Widened to the idle bound, not removed. Do runs before the idle timer
+		// below exists and this client carries no Timeout, so zeroing it left a
+		// peer that accepts the connection and then withholds headers blocking
+		// StreamChat for as long as the caller's context allows — which for the
+		// CLI's signal context and the console's is forever. The idle timeout is
+		// already the answer to "how long may this stream say nothing"; the
+		// header phase is the first stretch of exactly that silence. A caller
+		// who disables the idle bound disables this one with it.
+		clone.ResponseHeaderTimeout = c.streamIdleTimeout
 		streamTransport = clone
 	}
 	streamClient := &http.Client{
