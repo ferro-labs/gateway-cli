@@ -39,6 +39,17 @@ func TestResolvePrecedence(t *testing.T) {
 		{name: "MASTER_KEY is the last key fallback",
 			flagProfile: "local", envv: map[string]string{"MASTER_KEY": "fgw_master"},
 			wantURL: "http://localhost:9999", wantKey: "fgw_master", wantSource: "env:MASTER_KEY"},
+		// The whole point of the restriction: MASTER_KEY is in the shell on a
+		// gateway host, and this invocation is aimed at somebody else's host.
+		{name: "MASTER_KEY is withheld from a remote gateway", flagURL: "https://someone-else.example.com",
+			flagProfile: "local", envv: map[string]string{"MASTER_KEY": "fgw_master"},
+			wantURL: "https://someone-else.example.com", wantKey: "",
+			wantSource: "env:MASTER_KEY skipped (gateway is not loopback)"},
+		// A named credential is named for this tool, so the restriction must
+		// not spread to it: the two upper steps still reach any host.
+		{name: "a named credential still reaches a remote gateway", flagURL: "https://someone-else.example.com",
+			envv:    map[string]string{"FERRO_API_KEY": "fgw_env", "MASTER_KEY": "fgw_master"},
+			wantURL: "https://someone-else.example.com", wantKey: "fgw_env", wantSource: "env:FERRO_API_KEY"},
 		{name: "defaults", flagProfile: "none-selected", envv: map[string]string{},
 			flagURL: "", wantURL: "http://localhost:8080", wantKey: "", wantSource: ""},
 	}
@@ -93,5 +104,35 @@ func TestLoadMalformedYAMLNamesTheFile(t *testing.T) {
 	_, err := Load(path)
 	if err == nil || !strings.Contains(err.Error(), path) {
 		t.Fatalf("malformed YAML must fail and name its file: %v", err)
+	}
+}
+
+// TestIsLoopbackURL pins the semantics against internal/api's isLoopbackHost,
+// the other copy of this test. A case that changes here without changing there
+// means MASTER_KEY and the plaintext-HTTP gate have started disagreeing about
+// what counts as this machine.
+func TestIsLoopbackURL(t *testing.T) {
+	loopback := []string{
+		"http://localhost:8080", "http://LOCALHOST", "http://localhost.:8080",
+		"http://app.localhost:3000", "http://127.0.0.1:8080", "http://127.9.9.9",
+		"http://[::1]:8080", "https://localhost",
+	}
+	remote := []string{
+		"https://gw.example.com", "http://localhost.evil.com", "http://notlocalhost",
+		"http://0.0.0.0:8080", "http://10.0.0.1", "http://[fe80::1]", "",
+		// A scheme-less string parses as scheme "localhost" with an empty
+		// host, so it must not be read as the loopback name it resembles.
+		"localhost:8080",
+		"://not a url",
+	}
+	for _, u := range loopback {
+		if !isLoopbackURL(u) {
+			t.Errorf("%q is this machine; MASTER_KEY must be usable", u)
+		}
+	}
+	for _, u := range remote {
+		if isLoopbackURL(u) {
+			t.Errorf("%q is not this machine; MASTER_KEY must not be sent there", u)
+		}
 	}
 }
