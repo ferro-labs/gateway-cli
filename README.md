@@ -71,8 +71,8 @@ Every list and get honours `--format json|yaml`.
 | `ferro keys list` | Keys — name, masked secret, scopes, expiry, last used, uses, state. |
 | `ferro keys get <id>` | One key, as structured output. |
 | `ferro keys create` | `--name` (required), `--scope admin\|read_only`, `--expires-in`. |
-| `ferro keys rotate <id>` | Mint a new secret; the previous one stops authenticating at once. |
-| `ferro keys revoke <id>` | Immediate and irreversible. |
+| `ferro keys rotate <id>` | Mint a new secret; the previous one stops authenticating at once. Confirms first; `--yes` to skip. |
+| `ferro keys revoke <id>` | Immediate and irreversible. Confirms first; `--yes` to skip. |
 | `ferro logs list` | Request log — time, trace, provider, model, stage, duration, cost, tokens. |
 | `ferro logs stats` | Totals, errors, tokens, cost, and latency percentiles over a window. |
 | `ferro logs tail` | Follow the log. Poll-based, deduped, plain lines; Ctrl-C exits clean. |
@@ -89,12 +89,12 @@ Every list and get honours `--format json|yaml`.
 |---|---|
 | `FERRO_URL` | Gateway base URL. Default `http://localhost:8080`. |
 | `FERRO_API_KEY` | Bearer credential sent to the gateway. |
-| `MASTER_KEY` | Last-resort credential fallback. |
+| `MASTER_KEY` | Last-resort credential fallback, **only when the gateway URL is loopback**. It is the gateway server's own variable, so it is sent to `localhost` and `127.0.0.1` alone — never to a remote host that merely happens to be on the command line. |
 | `NO_COLOR` | Any value suppresses ANSI. (Also off under `TERM=dumb` or a non-TTY stdout.) |
 
 ```text
 URL:  --gateway-url  >  FERRO_URL  >  profile.url  >  http://localhost:8080
-key:  FERRO_API_KEY  >  profile.api_key_env deref  >  MASTER_KEY
+key:  FERRO_API_KEY  >  profile.api_key_env deref  >  MASTER_KEY (loopback only)
 ```
 
 **There is deliberately no credential flag.** Command-line arguments show up in
@@ -222,4 +222,5 @@ proves the CLI is internally correct; only this proves the contract is real.
 
 ## License
 
-Apache 2.0 — see [`LICENSE`](LICENSE).
+Copyright 2026 Ferro Labs. Apache 2.0 — see [`LICENSE`](LICENSE) and
+[`NOTICE`](NOTICE).

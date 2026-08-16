@@ -25,13 +25,20 @@ Requires AI Gateway v1.4.2 or later.
   filters for time, model, provider, stage, and credential.
 - **Key management** — list, create, rotate, and revoke API keys, with derived
   `active` / `expired` / `revoked` state. New secrets are printed once, to
-  stdout, and never enter the console transcript or history.
+  stdout, and never enter the console transcript or history. `rotate` and
+  `revoke` are irreversible, so at a terminal each asks for the key id typed
+  back before it runs; `--yes` skips the prompt, and is required when stdin is
+  not a terminal rather than the verb blocking or proceeding unasked.
 - **Playground** — streaming chat against the gateway with `/model` and
   `/clear`, showing token usage plus route and cost when available.
 - **Connection profiles** at `os.UserConfigDir()/ferro/config.yaml`. URL
   resolution: `--gateway-url` > `FERRO_URL` > profile > `http://localhost:8080`.
-  Key resolution: `FERRO_API_KEY` > profile `api_key_env` > `MASTER_KEY`. Keys
-  are never passed as flags, so they stay out of shell history.
+  Key resolution: `FERRO_API_KEY` > profile `api_key_env` > `MASTER_KEY`, the
+  last of which applies only when the gateway URL is loopback. `MASTER_KEY` is
+  the gateway server's own variable and is not chosen for ferro by anyone, so
+  it is the one source that could otherwise be forwarded to a remote host the
+  operator named on the command line. Keys are never passed as flags, so they
+  stay out of shell history.
 - **Global flags** `--gateway-url`, `--profile`, `--format`, `--ascii`, plus
   `NO_COLOR`, TTY, and `TERM=dumb` detection.
 
@@ -43,6 +50,19 @@ Requires AI Gateway v1.4.2 or later.
   degraded gateway exits 0 and reports its degraded state.
 - Missing measurements render `-`, never `0`. Endpoints the gateway does not
   serve disable that panel with a hint instead of failing the command.
+- Gateway-supplied text is data, never layout or terminal control. Control
+  characters in a provider name, an upstream error message, or a model's answer
+  are neutralized on every surface, so a table keeps its columns, a pane keeps
+  its line count, and nothing upstream can drive the terminal.
+
+### Distribution
+
+- Release binaries are reproducible: `-trimpath`, and both the build stamp and
+  the archive timestamps come from the tagged commit rather than the build
+  clock, so two builds of one tag are byte-identical.
+- An SPDX SBOM ships beside each archive.
+- `go install` builds, which carry no linker stamp, now report their module
+  version and commit from the embedded build info instead of `dev`/`none`.
 
 ### Known limitations
 
