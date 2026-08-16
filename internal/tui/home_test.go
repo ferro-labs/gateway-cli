@@ -1,9 +1,11 @@
 package tui
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/ferro-labs/gateway-cli/internal/api"
+	"github.com/ferro-labs/gateway-cli/internal/table"
 	"github.com/ferro-labs/gateway-cli/internal/tui/theme"
 )
 
@@ -364,6 +367,54 @@ func TestVerbRowsRenderEveryTranscriptVerb(t *testing.T) {
 		if len(rows) < 3 || !rows[0].Dim || !rows[1].Dim || rows[2].Dim {
 			t.Fatalf("%s: header must be dim and data must not be: %#v", verb, rows[:min(3, len(rows))])
 		}
+	}
+}
+
+// The console and `ferro providers` read the same two endpoints, and they used
+// to merge them differently: the console iterated /admin/health's list alone,
+// so /health naming openai and anthropic while /admin/health named only openai
+// printed two rows through a pipe and one on screen. That is the fixture below.
+//
+// The expectation is table.ProviderRows' own output rather than a table typed
+// out here, because a hand-written one drifts the moment either side changes a
+// column — and then the guard against divergence is itself divergent.
+func TestProviderRowsAreTheScriptableVerbsRows(t *testing.T) {
+	h := &api.HealthReport{Status: "ok", Providers: []api.ProviderHealth{
+		{Name: "openai", Status: "available", Circuit: "closed", Models: 3},
+		{Name: "anthropic", Status: "available", Circuit: "open", Models: 412},
+	}}
+	ah := &api.AdminHealth{Status: "degraded", Providers: []api.AdminProviderHealth{
+		{Name: "openai", Status: "degraded", Models: 3, Message: "rate limited upstream"},
+	}}
+
+	mux := http.NewServeMux()
+	serve := func(path string, v any) {
+		mux.HandleFunc(path, func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(v)
+		})
+	}
+	serve("/health", h)
+	serve("/admin/health", ah)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	c, err := api.New(srv.URL, "test-key")
+	if err != nil {
+		t.Fatalf("client: %v", err)
+	}
+
+	rows, err := verbRows(t.Context(), c, verbProviders)
+	if err != nil {
+		t.Fatalf("providers: %v", err)
+	}
+	want := tableRows(table.ProviderHeaders, table.ProviderRows(table.MergeProviders(h, ah)))
+	if !slices.Equal(rows, want) {
+		t.Fatalf("the console must render the rows `ferro providers` renders:\n got %#v\nwant %#v", rows, want)
+	}
+	// The union is the point: anthropic is in /health only, and three rows
+	// (header, rule, one provider) would be the console dropping it again.
+	if len(rows) != 4 {
+		t.Fatalf("want header, rule and both providers, got %d rows: %#v", len(rows), rows)
 	}
 }
 

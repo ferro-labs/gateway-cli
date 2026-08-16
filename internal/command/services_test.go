@@ -9,6 +9,7 @@ import (
 
 	"github.com/ferro-labs/gateway-cli/internal/api"
 	"github.com/ferro-labs/gateway-cli/internal/fixture"
+	"github.com/ferro-labs/gateway-cli/internal/table"
 )
 
 func TestModelsTable(t *testing.T) {
@@ -72,7 +73,7 @@ func TestMergeProvidersFallsBackToHealthAlone(t *testing.T) {
 	h := &api.HealthReport{Providers: []api.ProviderHealth{
 		{Name: "anthropic", Status: "available", Circuit: "open", Models: 412},
 	}}
-	rows := mergeProviders(h, nil)
+	rows := table.MergeProviders(h, nil)
 	if len(rows) != 1 || rows[0].Circuit != "open" || rows[0].Models != 412 {
 		t.Fatalf("health-only fallback lost data: %+v", rows)
 	}
@@ -87,7 +88,7 @@ func TestMergeProvidersKeepsHealthOnlyRowsAndNumericCounts(t *testing.T) {
 		{Name: "fallback", Status: "available", Circuit: "open", Models: 2},
 	}}
 	ah := &api.AdminHealth{Providers: []api.AdminProviderHealth{{Name: "openai", Status: "healthy", Models: 10}}}
-	rows := mergeProviders(h, ah)
+	rows := table.MergeProviders(h, ah)
 	if len(rows) != 2 || rows[1].Name != "fallback" || rows[1].Models != 2 {
 		t.Fatalf("admin health omissions must not hide /health providers: %+v", rows)
 	}
@@ -291,15 +292,15 @@ func TestAuditRejectsBadOutcomeClientSide(t *testing.T) {
 }
 
 // A dash is a rendering of absence, not a value the gateway sent. Every field
-// of providerRow must therefore stay literal in --format json, and be dashed
-// only where the table is drawn. circuit briefly broke that rule on its own,
+// of table.ProviderRow must therefore stay literal in --format json, and be
+// dashed only where the table is drawn. circuit briefly broke that rule on its own,
 // so one document carried "-" for an absent circuit beside an empty string
 // for an absent status — two conventions in one object.
 func TestProvidersJSONKeepsAbsenceLiteral(t *testing.T) {
 	h := &api.HealthReport{Providers: []api.ProviderHealth{
 		{Name: "anthropic", Status: "available", Models: 412}, // no circuit reported
 	}}
-	rows := mergeProviders(h, nil)
+	rows := table.MergeProviders(h, nil)
 	if len(rows) != 1 {
 		t.Fatalf("want one row, got %d", len(rows))
 	}

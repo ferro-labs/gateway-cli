@@ -223,8 +223,11 @@ func verbRows(ctx context.Context, c *api.Client, verb string) ([]TranscriptRow,
 		if adminErr != nil {
 			admin = nil
 		}
-		cells := providerCells(health, admin)
-		rows := tableRows([]string{colProvider, "STATUS", "CIRCUIT", "MODELS", "MESSAGE"}, cells)
+		// The merge, the five columns and the dash-for-absent rendering are
+		// internal/table's: `ferro providers` renders this same listing and the
+		// two used to disagree about a provider /admin/health omits.
+		cells := table.ProviderRows(table.MergeProviders(health, admin))
+		rows := tableRows(table.ProviderHeaders, cells)
 		if adminErr != nil {
 			// Name what actually happened. A refused credential and a timed-out
 			// or broken /admin/health cost the same two columns, but only one of
@@ -311,30 +314,6 @@ func mcpServers(ctx context.Context, c *api.Client) ([]api.MCPServer, error) {
 		return nil, err
 	}
 	return ready.MCPServers, nil
-}
-
-// providerCells merges the two listings: /health is unauthenticated and carries
-// the circuit; /admin/health needs a credential and carries the status, the
-// model count and the failure message.
-func providerCells(h *api.HealthReport, ah *api.AdminHealth) [][]string {
-	circuits := make(map[string]string, len(h.Providers))
-	for _, p := range h.Providers {
-		circuits[p.Name] = p.Circuit
-	}
-	if ah == nil {
-		cells := make([][]string, 0, len(h.Providers))
-		for _, p := range h.Providers {
-			cells = append(cells, []string{p.Name, p.Status, table.OrDash(p.Circuit), fmt.Sprintf("%d", p.Models), "-"})
-		}
-		return cells
-	}
-	cells := make([][]string, 0, len(ah.Providers))
-	for _, p := range ah.Providers {
-		cells = append(cells, []string{
-			p.Name, p.Status, table.OrDash(circuits[p.Name]), fmt.Sprintf("%d", p.Models), table.OrDash(p.Message),
-		})
-	}
-	return cells
 }
 
 // The two failure policies a catalog entry reports. Which one a plugin has is

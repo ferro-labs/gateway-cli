@@ -113,11 +113,14 @@ func (p *Printer) Fail(format string, a ...any) {
 // the condition ferro derived, STATUS the one the gateway reported — so a
 // reader who has learnt one table can read the next, and a script locating a
 // column by name finds it under that name everywhere.
+//
+// STATUS is not here: the provider listing was its only caller and that table's
+// shape now lives in internal/table alongside the merge that builds it, so both
+// this package and the console spell it from there.
 const (
 	colTime     = "TIME"
 	colName     = "NAME"
 	colState    = "STATE"
-	colStatus   = "STATUS"
 	colScopes   = "SCOPES"
 	colExpires  = "EXPIRES"
 	colProvider = "PROVIDER"
