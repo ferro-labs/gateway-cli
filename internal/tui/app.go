@@ -91,7 +91,12 @@ const (
 // RailData is the left rail's four sources, already reduced to what it draws.
 // A count of unknownCount means "not served", which is not the same as zero.
 type RailData struct {
-	Providers          []api.AdminProviderHealth // nil when unauthorized
+	// Providers is the last GOOD list, not this round's. fetchRail carries the
+	// previous snapshot forward, so a 401 or a failed admin-health round leaves
+	// what was already on screen there rather than blanking the rail; AuthError
+	// is what says this round could not confirm it. It is nil only before the
+	// first successful fetch, or on a gateway that reported none.
+	Providers          []api.AdminProviderHealth
 	MCPReady, MCPTotal int
 	PluginsActive      int
 	Sessions           int
@@ -117,7 +122,7 @@ type App struct {
 	// The three screens below Home. Each is a value the App owns outright and
 	// each carries its own generation counter, so a message from a screen the
 	// operator has left is dropped rather than applied — the same contract
-	// pollGen gives the shell's own polls.
+	// pollGen is reserved to give the shell's own polls.
 	Logs logsScreen
 	Keys keysScreen
 	Play playScreen
@@ -139,9 +144,12 @@ type App struct {
 	Rail    RailData
 	RailErr error
 
-	// pollGen is bumped when the connection changes; a message carrying an
-	// older generation is dropped, so a slow in-flight response cannot
-	// overwrite state fetched against the newer profile.
+	// pollGen is the generation every shell poll is issued under and matched
+	// against on arrival, so a slow in-flight response cannot overwrite state
+	// fetched against a newer connection. It is RESERVED: nothing bumps it and
+	// it is always zero, because v0.1 has neither a reconnect nor a profile
+	// switch to bump it for. The guards below are the seam either would land
+	// on; the screens' own gen counters are the live ones.
 	pollGen int
 
 	statusEvery, trafficEvery time.Duration

@@ -438,3 +438,61 @@ func TestLogsTruncatedWindowKeepsRowsAndSaysSo(t *testing.T) {
 		t.Fatal("a clean poll clears the truncation notice")
 	}
 }
+
+// Every pane owes exactly `rows` lines — that contract is what anchors the
+// composer to the bottom of the screen. Gateway data reaches both the table
+// (provider, model, stage) and the detail strip (error_message), so a newline
+// in either would add a line to the frame and shift everything below it.
+func TestLogsPaneKeepsItsLineCountWithControlCharactersInGatewayData(t *testing.T) {
+	a := composerApp()
+	a.route("logs")
+	r := logRow("tr_control0", time.Now())
+	r.Provider = "anth\nropic"
+	r.ErrorMessage = "upstream\nrefused \x1b[31mhard\x1b[0m"
+	a.update(logsBatchMsg{gen: a.Logs.gen, rows: []api.LogEntry{r}})
+	a.Logs.sel, a.Logs.detail = 0, true
+
+	for _, rows := range []int{4, 9, 20} {
+		out := a.Logs.view(a, 100, rows)
+		if got := strings.Count(out, "\n") + 1; got != rows {
+			t.Fatalf("view(rows=%d) returned %d lines:\n%q", rows, got, out)
+		}
+		if strings.Contains(out, "\x1b") {
+			t.Fatalf("view(rows=%d) forwarded an escape sequence:\n%q", rows, out)
+		}
+	}
+}
+
+// api.dedupeKey identifies a log row as trace + stage + created_at, because one
+// trace has one row per pipeline stage. Following the trace id alone lands the
+// cursor on whichever row of that trace arrives first, which is the silent
+// re-pointing of the detail strip prepend exists to prevent.
+func TestLogsSelectionFollowsItsRowNotItsTrace(t *testing.T) {
+	now := time.Now()
+	for _, tc := range []struct {
+		name   string
+		mutate func(*api.LogEntry)
+	}{
+		{"another stage of the same trace", func(e *api.LogEntry) { e.Stage = "on_error" }},
+		{"the same trace and stage seen again later", func(e *api.LogEntry) { e.CreatedAt = now.Add(time.Second) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var s logsScreen
+			selected := logRow("tr_onetrace", now)
+			s.rows = []api.LogEntry{selected}
+			s.sel, s.detail = 0, true
+
+			arriving := logRow("tr_onetrace", now)
+			tc.mutate(&arriving)
+			s.prepend([]api.LogEntry{arriving})
+
+			if s.sel != 1 {
+				t.Fatalf("the selection must follow its own row to index 1, got %d", s.sel)
+			}
+			got, ok := s.row()
+			if !ok || got.Stage != selected.Stage || !got.CreatedAt.Equal(selected.CreatedAt) {
+				t.Fatalf("the strip is describing a different row now: %+v", got)
+			}
+		})
+	}
+}

@@ -190,12 +190,7 @@ func (s *logsScreen) prepend(rows []api.LogEntry) {
 	if len(rows) == 0 {
 		return
 	}
-	var selected string
-	hadSelection := false
-	if k, ok := s.row(); ok {
-		selected = k.TraceID
-		hadSelection = true
-	}
+	selected, hadSelection := s.row()
 
 	next := make([]api.LogEntry, 0, min(len(rows)+len(s.rows), logsRing))
 	for i := len(rows) - 1; i >= 0; i-- {
@@ -211,12 +206,21 @@ func (s *logsScreen) prepend(rows []api.LogEntry) {
 		return
 	}
 	for i, r := range s.rows {
-		if r.TraceID == selected {
+		if sameRow(r, selected) {
 			s.sel = i
 			return
 		}
 	}
 	s.sel, s.detail = -1, false
+}
+
+// sameRow is api.dedupeKey's identity, spelled locally because the wire's
+// notion of one row belongs to the API layer. A trace has one row per pipeline
+// stage, so the trace id alone matches several rows: following it would land
+// the cursor on a different stage of the same request, which is the exact
+// silent re-pointing prepend exists to prevent.
+func sameRow(a, b api.LogEntry) bool {
+	return a.TraceID == b.TraceID && a.Stage == b.Stage && a.CreatedAt.Equal(b.CreatedAt)
 }
 
 func (s *logsScreen) row() (api.LogEntry, bool) {
