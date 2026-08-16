@@ -354,6 +354,59 @@ func TestFollowerTruncatedPollKeepsRowsAndAdvances(t *testing.T) {
 	}
 }
 
+// Not every gateway populates summary.total_entries. An absent one decodes as
+// 0, which used to satisfy the end-of-window test on the very first FULL page:
+// the tail stopped after one page and ErrFollowTruncated — the only mechanism
+// that tells the operator rows were skipped — never fired. A tail that cannot
+// see the end of its window must drain to the bound and then SAY so.
+func TestFollowerWithoutTotalEntriesPagesOnAndReportsTruncation(t *testing.T) {
+	base := time.Date(2026, 8, 8, 10, 20, 0, 0, time.UTC)
+	var mu sync.Mutex
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests++
+		mu.Unlock()
+		offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+		// Newest first, one full page every time, and no total_entries at all.
+		row := logRow(fmt.Sprintf("T%d", offset), "after_request",
+			base.Add(-time.Duration(offset)*time.Second).Format(time.RFC3339))
+		writeJSON(t, w, http.StatusOK, `{"data":[`+row+`],"summary":{"returned_entries":1}}`)
+	}))
+	defer srv.Close()
+
+	rows, err := NewFollower(testClient(t, srv.URL, "fgw_ok"), LogsQuery{Limit: 1}).Poll(context.Background())
+	if !errors.Is(err, ErrFollowTruncated) {
+		t.Fatalf("a drain that never reached the end of its window must state the loss, got %v", err)
+	}
+	if len(rows) != maxFollowPages {
+		t.Fatalf("full pages must keep paging to the bound, got %d rows want %d", len(rows), maxFollowPages)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if requests != maxFollowPages {
+		t.Fatalf("the tail stopped after %d pages, want %d", requests, maxFollowPages)
+	}
+}
+
+// The other half of that branch: a SHORT page still ends the drain on a gateway
+// that sends no total, so the fix cannot have turned every quiet poll into a
+// 32-page walk.
+func TestFollowerWithoutTotalEntriesStopsOnAShortPage(t *testing.T) {
+	row := logRow("A", "after_request", "2026-08-08T10:00:01Z")
+	stub := &followStub{pages: []string{`{"data":[` + row + `],"summary":{"returned_entries":1}}`}}
+	srv := httptest.NewServer(stub.handler(t))
+	defer srv.Close()
+
+	rows, err := NewFollower(testClient(t, srv.URL, "fgw_ok"), LogsQuery{}).Poll(context.Background())
+	if err != nil {
+		t.Fatalf("a short page is the end of the window whatever the summary says: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("want the one row, got %v", traceIDs(rows))
+	}
+}
+
 func TestFollowerErrorKeepsCursor(t *testing.T) {
 	a, b, cc := "2026-08-08T10:00:01Z", "2026-08-08T10:00:02Z", "2026-08-08T10:00:03Z"
 	stub := &followStub{

@@ -225,7 +225,15 @@ func (f *Follower) Poll(ctx context.Context) ([]LogEntry, error) {
 			return nil, err
 		}
 		rows = append(rows, page.Data...)
-		if len(page.Data) < q.Limit || q.Offset+len(page.Data) >= page.Summary.TotalEntries {
+		// A short page is the end-of-window signal every gateway gives. The
+		// total is only the second one when the gateway actually sent it: an
+		// absent summary.total_entries decodes as 0, which read as "the window
+		// ended here" on the first FULL page and capped the tail at one page —
+		// silently, because drained was set and ErrFollowTruncated never fired.
+		// With no usable total the drain runs to the page bound instead, and
+		// the stated loss that produces beats a silent one.
+		if total := page.Summary.TotalEntries; len(page.Data) < q.Limit ||
+			(total > 0 && q.Offset+len(page.Data) >= total) {
 			drained = true
 			break
 		}
