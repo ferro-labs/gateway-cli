@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestBearerHeaderSentAndOmitted(t *testing.T) {
@@ -201,5 +202,20 @@ func TestWithTimeoutUpdatesClientAndHeaderBounds(t *testing.T) {
 	}
 	if c.hc.Timeout != 3*time.Second || tr.ResponseHeaderTimeout != 3*time.Second {
 		t.Fatalf("timeouts diverged: client=%s header=%s", c.hc.Timeout, tr.ResponseHeaderTimeout)
+	}
+}
+
+func TestDecodeAPIErrorTruncatesOnARuneBoundary(t *testing.T) {
+	// The multi-byte runes straddle the cut, so a byte slice would keep half of
+	// one and print U+FFFD — a corruption the operator would read as the
+	// gateway's, not ferro's.
+	raw := []byte(strings.Repeat("a", maxErrMessage-1) + strings.Repeat("é", 8))
+	e := decodeAPIError(http.StatusBadGateway, raw)
+	if !strings.HasSuffix(e.Message, "… (truncated)") {
+		t.Fatalf("oversized body must be marked truncated, got %d bytes ending %q",
+			len(e.Message), e.Message[max(0, len(e.Message)-20):])
+	}
+	if strings.ContainsRune(e.Message, utf8.RuneError) || !utf8.ValidString(e.Message) {
+		t.Fatal("truncation split a rune")
 	}
 }

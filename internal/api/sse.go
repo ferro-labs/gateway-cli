@@ -166,12 +166,25 @@ func (c *Client) StreamChat(ctx context.Context, req ChatRequest) (*ChatStream, 
 		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
 
-	// A dedicated client: the shared one carries DefaultTimeout, which would
-	// cut every stream off after 15s. Lifetime is ctx's job here. The redirect
-	// refusal is not optional — a bearer token must not replay to whatever
-	// host a redirect names, on this surface as much as any other.
+	// A dedicated client AND a dedicated transport: the shared client carries
+	// DefaultTimeout and its transport carries the same value as
+	// ResponseHeaderTimeout, so escaping only the first still cut every stream
+	// off at the header phase. A gateway or ingress that withholds response
+	// headers until the first token is ordinary, which is what
+	// DefaultStreamIdleTimeout is sized for; here the lifetime is ctx's and the
+	// idle timer's alone. The assertion falls back to the transport as-is
+	// because a test double is not an *http.Transport and carries no bound to
+	// clear. The redirect refusal is not optional — a bearer token must not
+	// replay to whatever host a redirect names, on this surface as much as any
+	// other.
+	streamTransport := c.hc.Transport
+	if tr, ok := streamTransport.(*http.Transport); ok {
+		clone := tr.Clone()
+		clone.ResponseHeaderTimeout = 0
+		streamTransport = clone
+	}
 	streamClient := &http.Client{
-		Transport:     c.hc.Transport,
+		Transport:     streamTransport,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	resp, err := streamClient.Do(httpReq)
@@ -277,10 +290,10 @@ func (c *Client) StreamChat(ctx context.Context, req ChatRequest) (*ChatStream, 
 					sendEvent(ctx, events, StreamEvent{Err: e})
 					return
 				}
-				var chunk ChatChunk
-				if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
-					continue // one malformed frame never kills a live stream
-				}
+				// Accounted before the decode, never after: an undecodable
+				// frame was still read off the wire, and charging only the ones
+				// that parsed let an endless run of garbage frames walk straight
+				// past the bound this constant exists to enforce.
 				streamBytes += len(payload)
 				if streamBytes > maxStreamBytes {
 					sendEvent(ctx, events, StreamEvent{Err: &Error{
@@ -288,6 +301,10 @@ func (c *Client) StreamChat(ctx context.Context, req ChatRequest) (*ChatStream, 
 						Message: fmt.Sprintf("aggregate stream payload exceeded the %d-byte limit; the answer is truncated", maxStreamBytes),
 					}})
 					return
+				}
+				var chunk ChatChunk
+				if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+					continue // one malformed frame never kills a live stream
 				}
 				resetIdle()
 				if !sendEvent(ctx, events, StreamEvent{Chunk: &chunk}) {

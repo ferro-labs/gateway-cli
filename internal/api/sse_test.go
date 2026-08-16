@@ -393,6 +393,70 @@ func TestStreamChatAggregatePayloadIsBounded(t *testing.T) {
 	}
 }
 
+func TestStreamChatUndecodableFramesCountTowardAggregateBound(t *testing.T) {
+	// Nothing here parses, so every frame takes the malformed-frame path — the
+	// path that used to skip the accounting and hand a hostile or broken
+	// upstream an unbounded stream.
+	const size = 512 << 10
+	payload := strings.Repeat("x", size)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		frames := make([]string, 0, maxStreamBytes/size+2)
+		for range maxStreamBytes/size + 1 {
+			frames = append(frames, frame(payload))
+		}
+		// [DONE] last: before the fix the stream reached it and reported a
+		// complete answer after 4 MiB of garbage.
+		writeSSE(w, "trace-garbage", append(frames, doneFrame)...)
+	}))
+	defer srv.Close()
+
+	c, _ := New(srv.URL, "")
+	st, err := c.StreamChat(context.Background(), ChatRequest{Model: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Cancel()
+	events := drain(t, st)
+	last := events[len(events)-1]
+	if last.Done {
+		t.Fatalf("undecodable frames must not ride past the aggregate bound to Done: %+v", events)
+	}
+	if last.Err == nil || last.Err.Code != CodeStreamIncomplete ||
+		!strings.Contains(last.Err.Message, "aggregate") {
+		t.Fatalf("aggregate stream limit must terminate visibly: %+v", last)
+	}
+}
+
+func TestStreamChatSurvivesSlowResponseHeaders(t *testing.T) {
+	// Well past the client's request timeout: a gateway that buffers until the
+	// upstream's first token, or an ingress in front of one, looks exactly like
+	// this, and the idle timer — not the header bound — is what should judge it.
+	const headerDelay = 300 * time.Millisecond
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(headerDelay)
+		writeSSE(w, "trace-slow-headers",
+			frame(`{"id":"c1","choices":[{"index":0,"delta":{"content":"late"}}]}`), doneFrame)
+	}))
+	defer srv.Close()
+
+	c, err := New(srv.URL, "", WithTimeout(40*time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := c.StreamChat(context.Background(), ChatRequest{Model: "m"})
+	if err != nil {
+		t.Fatalf("a slow response header must not kill a stream: %v", err)
+	}
+	defer st.Cancel()
+	events := drain(t, st)
+	if got := content(events); got != "late" {
+		t.Fatalf("content = %q, want %q (events: %+v)", got, "late", events)
+	}
+	if last := events[len(events)-1]; !last.Done {
+		t.Fatalf("stream must reach Done: %+v", events)
+	}
+}
+
 func TestStreamChatCancelMidStreamDoesNotDeadlock(t *testing.T) {
 	released := make(chan struct{})
 	tick := frame(`{"id":"c1","choices":[{"index":0,"delta":{"content":"tick"}}]}`)

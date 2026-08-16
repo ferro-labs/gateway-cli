@@ -18,6 +18,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -259,7 +260,14 @@ const maxErrMessage = 2048
 func decodeAPIError(status int, raw []byte) *Error {
 	msg := strings.TrimSpace(string(raw))
 	if len(msg) > maxErrMessage {
-		msg = msg[:maxErrMessage] + "… (truncated)"
+		// Back up to a rune boundary before slicing: a cut through the middle
+		// of a multi-byte rune renders as U+FFFD, which reads as corruption in
+		// the gateway's reply rather than as ferro's own truncation.
+		cut := maxErrMessage
+		for cut > 0 && !utf8.RuneStart(msg[cut]) {
+			cut--
+		}
+		msg = msg[:cut] + "… (truncated)"
 	}
 	e := &Error{Status: status, Message: msg}
 	var env struct {
