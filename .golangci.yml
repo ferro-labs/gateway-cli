@@ -1,0 +1,60 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - bodyclose
+    - copyloopvar
+    - depguard
+    - dupl
+    - errcheck
+    - errorlint
+    - goconst
+    - gocritic
+    - gocyclo
+    - gosec
+    - govet
+    - ineffassign
+    - maintidx
+    - misspell
+    - noctx
+    - nolintlint
+    - prealloc
+    - revive
+    - staticcheck
+    - unconvert
+    - unparam
+    - unused
+
+  settings:
+    depguard:
+      rules:
+        main:
+          deny:
+            - pkg: gopkg.in/yaml.v3
+              desc: use go.yaml.in/yaml/v3
+            # depguard prefix-matches, so the module root also denies every
+            # current and future subpackage.
+            - pkg: github.com/ferro-labs/ai-gateway
+              desc: gateway-cli communicates with AI Gateway over HTTP only
+    dupl:
+      threshold: 150
+    gocyclo:
+      min-complexity: 30
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+      allow-unused: false
+
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters: [dupl, errorlint, goconst, unparam]
+      - path: _test\.go
+        linters: [staticcheck]
+        text: SA5011
+      - path: internal/command/output\.go
+        linters: [gosec]
+        text: G115

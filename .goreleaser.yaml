@@ -1,0 +1,66 @@
+# GoReleaser for the standalone ferro operator console.
+version: 2
+project_name: ferro
+dist: dist
+
+builds:
+  - id: ferro
+    main: ./cmd/ferro
+    binary: ferro
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    # Reproducibility: rebuilding a tag must yield the same bytes, or a user has
+    # no way to check that a published binary was built from the source it names.
+    # mod_timestamp pins the file mtimes goreleaser stamps into archives, and
+    # .CommitDate replaces the build wall clock below -- both are needed, since
+    # either one alone still leaves the build time baked in.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    # -trimpath is the third leg: without it the binary embeds the absolute build
+    # directory, so a rebuild anywhere but the CI runner's own path differs even
+    # with the timestamps pinned -- and the published binary leaks that path.
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X github.com/ferro-labs/gateway-cli/internal/version.Version={{.Version}}
+      - -X github.com/ferro-labs/gateway-cli/internal/version.Commit={{.ShortCommit}}
+      - -X github.com/ferro-labs/gateway-cli/internal/version.Date={{.CommitDate}}
+
+# cmd/fakegw is a development tool (a fake gateway for testing the CLI without
+# a server). It is excluded by omission — builds are listed explicitly above.
+# Do not add a build entry for it.
+
+archives:
+  - formats: [tar.gz]
+    name_template: "ferro_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - src: README.md
+        dst: README.md
+      - src: CHANGELOG.md
+        dst: CHANGELOG.md
+      - src: LICENSE
+        dst: LICENSE
+
+checksum:
+  name_template: checksums.txt
+
+# One SBOM per archive (syft's default, SPDX JSON), so a consumer can answer
+# "is this build affected by CVE-x" without unpacking and re-scanning it.
+# Requires syft on the runner -- release.yml installs it, and goreleaser fails
+# the release rather than skipping the SBOM if it is missing.
+sboms:
+  - artifacts: archive
+
+release:
+  name_template: "Ferro CLI v{{ .Version }}"
+
+changelog:
+  use: git
+  filters:
+    include:
+      - "^feat"
+      - "^fix"
+      - "^perf"
